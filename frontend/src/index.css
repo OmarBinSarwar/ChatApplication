@@ -25,6 +25,7 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 body {
@@ -616,8 +617,13 @@ body {
   .messages-container {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 1rem;
     gap: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
   }
 
   .message-wrapper {
@@ -643,6 +649,7 @@ body {
     padding: 0.65rem 0.9rem;
     font-size: 0.9rem;
     border-radius: 18px;
+    font-size: 16px;
   }
 
   .send-btn,
@@ -749,6 +756,10 @@ body {
   .chat-input-container {
     padding: 0.65rem 0.85rem;
     gap: 0.4rem;
+  }
+
+  .chat-input {
+    font-size: 16px;
   }
 
   .send-btn,

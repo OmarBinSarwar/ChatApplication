@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Send, Image, Plus, LogOut, Menu, X } from "lucide-react";
-import { fetchApi, BASE_URL } from "../lib/api";
+import { Image, LogOut, Menu, Plus, Send, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import { BASE_URL, fetchApi } from "../lib/api";
 
 export default function ChatConsole({ user, onLogout }) {
   const [conversations, setConversations] = useState([]);
@@ -17,6 +17,53 @@ export default function ChatConsole({ user, onLogout }) {
   const socketRef = useRef();
   const messagesEndRef = useRef();
   const typingTimeoutRef = useRef();
+  const chatAreaRef = useRef();
+
+  // Handle mobile virtual keyboard
+  useEffect(() => {
+    const handleVisualViewportResize = () => {
+      if (chatAreaRef.current && window.visualViewport) {
+        const vh = window.visualViewport.height;
+        const headerHeight = window.innerWidth <= 480 ? 52 : 56;
+        chatAreaRef.current.style.height = `${vh - headerHeight}px`;
+
+        // Scroll to bottom when keyboard appears
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 100);
+      }
+    };
+
+    const handleFocus = () => {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 300);
+    };
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener(
+        "resize",
+        handleVisualViewportResize,
+      );
+    }
+
+    const inputElements = document.querySelectorAll(".chat-input");
+    inputElements.forEach((input) => {
+      input.addEventListener("focus", handleFocus);
+    });
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener(
+          "resize",
+          handleVisualViewportResize,
+        );
+      }
+      inputElements.forEach((input) => {
+        input.removeEventListener("focus", handleFocus);
+      });
+    };
+  }, []);
 
   useEffect(() => {
     // Connect to socket
@@ -317,7 +364,7 @@ export default function ChatConsole({ user, onLogout }) {
 
       {/* Main Chat Area */}
       {activeConversation ? (
-        <div className="chat-area glass">
+        <div className="chat-area glass" ref={chatAreaRef}>
           <div className="chat-header">
             <img
               src={
