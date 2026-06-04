@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Image, Plus, LogOut } from 'lucide-react';
+import { Send, Image, Plus, LogOut, Menu, X } from 'lucide-react';
 import { fetchApi, BASE_URL } from '../lib/api';
 import { io } from 'socket.io-client';
 
@@ -12,6 +12,7 @@ export default function ChatConsole({ user, onLogout }) {
   const [file, setFile] = useState(null);
   const [typingUser, setTypingUser] = useState(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   
   const socketRef = useRef();
   const messagesEndRef = useRef();
@@ -141,8 +142,27 @@ export default function ChatConsole({ user, onLogout }) {
 
   return (
     <div className="app-container">
+      {/* Mobile Header */}
+      <div className="mobile-header glass">
+        <button 
+          className="menu-btn" 
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        <h1 className="mobile-title">Chat</h1>
+        <LogOut 
+          size={20} 
+          className="logout-icon" 
+          onClick={onLogout} 
+        />
+      </div>
+
+      {/* Sidebar Overlay */}
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)}></div>}
+
       {/* Sidebar */}
-      <div className="sidebar glass">
+      <div className={`sidebar glass ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <img 
             src={user.avatar ? `${BASE_URL}${user.avatar}` : 'https://ui-avatars.com/api/?name='+user.name} 
@@ -150,23 +170,35 @@ export default function ChatConsole({ user, onLogout }) {
             className="avatar" 
           />
           <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '1rem' }}>{user.name}</h3>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Online</span>
+            <h3 style={{ fontSize: '1rem', margin: 0 }}>{user.name}</h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Online</span>
           </div>
-          <LogOut size={20} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={onLogout} />
+          <button 
+            className="close-sidebar-btn desktop-only"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <div style={{ padding: '1rem', borderBottom: '1px solid var(--panel-border)' }}>
-          <button className="btn" onClick={() => setShowUsersPanel(!showUsersPanel)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-            <Plus size={16} /> New Chat
+          <button className="btn new-chat-btn" onClick={() => setShowUsersPanel(!showUsersPanel)}>
+            <Plus size={18} /> <span>New Chat</span>
           </button>
         </div>
 
         {showUsersPanel ? (
           <div className="conversations-list">
-            <h4 style={{ margin: '0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Available Users</h4>
+            <h4 style={{ margin: '1rem 1rem 0.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Available Users</h4>
             {users.map(u => (
-              <div key={u.id} className="conversation-item" onClick={() => handleStartChat(u.id)}>
+              <div 
+                key={u.id} 
+                className="conversation-item" 
+                onClick={() => {
+                  handleStartChat(u.id);
+                  setSidebarOpen(false);
+                }}
+              >
                 <img src={u.avatar ? `${BASE_URL}${u.avatar}` : 'https://ui-avatars.com/api/?name='+u.name} className="avatar" style={{width: 40, height: 40}} alt="" />
                 <span>{u.name}</span>
               </div>
@@ -174,19 +206,26 @@ export default function ChatConsole({ user, onLogout }) {
           </div>
         ) : (
           <div className="conversations-list">
-            <h4 style={{ margin: '0.5rem 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Recent</h4>
-            {conversations.map(c => (
-              <div 
-                key={c.id} 
-                className={`conversation-item ${activeConversation?.id === c.id ? 'active' : ''}`}
-                onClick={() => setActiveConversation(c)}
-              >
-                <img src={c.other_user.avatar ? `${BASE_URL}${c.other_user.avatar}` : 'https://ui-avatars.com/api/?name='+c.other_user.name} className="avatar" style={{width: 40, height: 40}} alt="" />
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{c.other_user.name}</div>
+            <h4 style={{ margin: '1rem 1rem 0.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Recent</h4>
+            {conversations.length === 0 ? (
+              <div style={{ padding: '1rem', color: 'var(--text-muted)', textAlign: 'center', fontSize: '0.9rem' }}>No conversations yet</div>
+            ) : (
+              conversations.map(c => (
+                <div 
+                  key={c.id} 
+                  className={`conversation-item ${activeConversation?.id === c.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setActiveConversation(c);
+                    setSidebarOpen(false);
+                  }}
+                >
+                  <img src={c.other_user.avatar ? `${BASE_URL}${c.other_user.avatar}` : 'https://ui-avatars.com/api/?name='+c.other_user.name} className="avatar" style={{width: 40, height: 40}} alt="" />
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{c.other_user.name}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
       </div>
@@ -195,9 +234,20 @@ export default function ChatConsole({ user, onLogout }) {
       {activeConversation ? (
         <div className="chat-area glass">
           <div className="chat-header">
-            <img src={activeConversation.other_user.avatar ? `${BASE_URL}${activeConversation.other_user.avatar}` : 'https://ui-avatars.com/api/?name='+activeConversation.other_user.name} className="avatar" alt="" />
-            <div>
+            <button 
+              className="back-btn mobile-only" 
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu size={20} />
+            </button>
+            <img 
+              src={activeConversation.other_user.avatar ? `${BASE_URL}${activeConversation.other_user.avatar}` : 'https://ui-avatars.com/api/?name='+activeConversation.other_user.name} 
+              className="avatar" 
+              alt="" 
+            />
+            <div className="chat-header-info">
               <h3>{activeConversation.other_user.name}</h3>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Active now</span>
             </div>
           </div>
           
@@ -221,27 +271,29 @@ export default function ChatConsole({ user, onLogout }) {
           </div>
 
           <form className="chat-input-container" onSubmit={handleSendMessage}>
-            <label style={{ cursor: 'pointer', color: file ? 'var(--accent-color)' : 'var(--text-muted)' }}>
-              <Image size={24} />
+            <label className="file-input-label" title="Attach image">
+              <Image size={20} />
               <input type="file" style={{ display: 'none' }} accept="image/*" onChange={e => setFile(e.target.files[0])} />
+              {file && <span className="file-badge">1</span>}
             </label>
             <input 
               type="text" 
               className="chat-input" 
-              placeholder="Type a message..." 
+              placeholder="Message..." 
               value={newMessage}
               onChange={handleTyping}
+              maxLength="500"
             />
-            <button type="submit" className="send-btn" disabled={!newMessage.trim() && !file}>
-              <Send size={20} />
+            <button type="submit" className="send-btn" disabled={!newMessage.trim() && !file} title="Send message">
+              <Send size={18} />
             </button>
           </form>
         </div>
       ) : (
-        <div className="chat-area glass" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div className="chat-area glass empty-state">
           <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-            <h2 style={{ marginBottom: '1rem', color: 'var(--text-main)' }}>Welcome to Antigravity Chat</h2>
-            <p>Select a conversation or start a new one.</p>
+            <h2 style={{ marginBottom: '0.5rem', color: 'var(--text-main)', fontSize: '1.5rem', fontWeight: 600 }}>Antigravity Chat</h2>
+            <p style={{ fontSize: '0.95rem' }}>Select a conversation or start a new one</p>
           </div>
         </div>
       )}

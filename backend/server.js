@@ -18,8 +18,39 @@ const server = http.createServer(app);
 connectDB();
 
 // Middleware
+app.use((req, res, next) => {
+  console.log(`[Request] ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+  next();
+});
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like curl)
+    if (!origin) return callback(null, true);
+    
+    if (process.env.NODE_ENV === 'production') {
+      const formattedFrontendUrl = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : '';
+      const formattedOrigin = origin.replace(/\/$/, '');
+      if (formattedOrigin === formattedFrontendUrl) {
+        return callback(null, true);
+      } else {
+        return callback(new Error(`Not allowed by CORS in production. Origin: ${origin}, FRONTEND_URL: ${process.env.FRONTEND_URL}`));
+      }
+    }
+    
+    // In development, allow localhost, 127.0.0.1, and local network IPs
+    if (
+      origin.includes('localhost') || 
+      origin.includes('127.0.0.1') || 
+      origin.startsWith('http://192.168.') || 
+      origin.startsWith('http://10.') || 
+      origin.startsWith('http://172.')
+    ) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS in development'));
+  },
   credentials: true
 }));
 app.use(express.json());
