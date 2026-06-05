@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { fetchApi } from '../lib/api';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Eye, EyeOff } from 'lucide-react';
 
 
 export default function Login({ onLogin }) {
@@ -9,6 +9,7 @@ export default function Login({ onLogin }) {
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -83,13 +84,23 @@ export default function Login({ onLogin }) {
             </div>
             <div className="form-group">
               <label>Password</label>
-              <input 
-                type="password" 
-                className="form-control" 
-                required 
-                value={formData.password} 
-                onChange={(e) => setFormData({...formData, password: e.target.value})} 
-              />
+              <div className="password-input-wrapper">
+                <input 
+                  type={showPassword ? 'text' : 'password'} 
+                  className="form-control" 
+                  required 
+                  value={formData.password} 
+                  onChange={(e) => setFormData({...formData, password: e.target.value})} 
+                />
+                <button 
+                  type="button" 
+                  className="password-toggle-btn" 
+                  onClick={() => setShowPassword(!showPassword)}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
             {isRegister && (
               <div className="form-group">
