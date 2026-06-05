@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { fetchApi } from '../lib/api';
+import { MessageSquare } from 'lucide-react';
+
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -48,67 +50,76 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="auth-container">
-      <div className="auth-box glass">
-        <h2>{isRegister ? 'Create an Account' : 'Welcome Back'}</h2>
-        {error && <div style={{ color: '#ff4d4f', marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>}
-        <form onSubmit={handleSubmit}>
-          {isRegister && (
+      <div className="auth-wrapper">
+        <div className="auth-box glass">
+          <div className="auth-header-brand">
+            <MessageSquare className="auth-logo-icon" size={32} />
+            <h1 className="auth-logo">OBS ChatApp</h1>
+          </div>
+          <h2>{isRegister ? 'Create an Account' : 'Welcome Back'}</h2>
+          {error && <div style={{ color: '#ff4d4f', marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>}
+          <form onSubmit={handleSubmit}>
+            {isRegister && (
+              <div className="form-group">
+                <label>Name</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  required 
+                  value={formData.name} 
+                  onChange={(e) => setFormData({...formData, name: e.target.value})} 
+                />
+              </div>
+            )}
             <div className="form-group">
-              <label>Name</label>
+              <label>Email</label>
               <input 
-                type="text" 
+                type="email" 
                 className="form-control" 
                 required 
-                value={formData.name} 
-                onChange={(e) => setFormData({...formData, name: e.target.value})} 
+                value={formData.email} 
+                onChange={(e) => setFormData({...formData, email: e.target.value})} 
               />
             </div>
-          )}
-          <div className="form-group">
-            <label>Email</label>
-            <input 
-              type="email" 
-              className="form-control" 
-              required 
-              value={formData.email} 
-              onChange={(e) => setFormData({...formData, email: e.target.value})} 
-            />
-          </div>
-          <div className="form-group">
-            <label>Password</label>
-            <input 
-              type="password" 
-              className="form-control" 
-              required 
-              value={formData.password} 
-              onChange={(e) => setFormData({...formData, password: e.target.value})} 
-            />
-          </div>
-          {isRegister && (
             <div className="form-group">
-              <label>Avatar (Optional)</label>
+              <label>Password</label>
               <input 
-                type="file" 
+                type="password" 
                 className="form-control" 
-                accept="image/*"
-                onChange={(e) => setFile(e.target.files[0])} 
+                required 
+                value={formData.password} 
+                onChange={(e) => setFormData({...formData, password: e.target.value})} 
               />
             </div>
-          )}
-          <button type="submit" className="btn" disabled={loading}>
-            {loading ? 'Processing...' : (isRegister ? 'Sign Up' : 'Log In')}
-          </button>
-        </form>
-        <p style={{ marginTop: '1.5rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-          {isRegister ? 'Already have an account? ' : "Don't have an account? "}
-          <span 
-            style={{ color: 'var(--accent-color)', cursor: 'pointer', fontWeight: 600 }}
-            onClick={() => setIsRegister(!isRegister)}
-          >
-            {isRegister ? 'Log In' : 'Sign Up'}
-          </span>
-        </p>
+            {isRegister && (
+              <div className="form-group">
+                <label>Avatar (Optional)</label>
+                <input 
+                  type="file" 
+                  className="form-control" 
+                  accept="image/*"
+                  onChange={(e) => setFile(e.target.files[0])} 
+                />
+              </div>
+            )}
+            <button type="submit" className="btn" disabled={loading}>
+              {loading ? 'Processing...' : (isRegister ? 'Sign Up' : 'Log In')}
+            </button>
+          </form>
+          <p style={{ marginTop: '1.5rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+            {isRegister ? 'Already have an account? ' : "Don't have an account? "}
+            <span 
+              style={{ color: 'var(--accent-color)', cursor: 'pointer', fontWeight: 600 }}
+              onClick={() => setIsRegister(!isRegister)}
+            >
+              {isRegister ? 'Log In' : 'Sign Up'}
+            </span>
+          </p>
+        </div>
       </div>
+      <footer className="auth-footer">
+        <p>&copy; {new Date().getFullYear()} OBS ChatApp. Designed & Developed by Omar Bin Sarwar.</p>
+      </footer>
     </div>
   );
 }

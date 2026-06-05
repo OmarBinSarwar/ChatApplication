@@ -1,4 +1,4 @@
-import { Image, LogOut, Menu, Plus, Send, X } from "lucide-react";
+import { Image, LogOut, Menu, Plus, Send, X, MessageSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
@@ -208,7 +208,7 @@ export default function ChatConsole({ user, onLogout }) {
         >
           {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
-        <h1 className="mobile-title">Chat</h1>
+        <h1 className="mobile-title">OBS ChatApp</h1>
         <LogOut size={20} className="logout-icon" onClick={onLogout} />
       </div>
 
@@ -222,6 +222,10 @@ export default function ChatConsole({ user, onLogout }) {
 
       {/* Sidebar */}
       <div className={`sidebar glass ${sidebarOpen ? "open" : ""}`}>
+        <div className="sidebar-brand">
+          <MessageSquare size={18} className="sidebar-brand-icon" />
+          <h2>OBS ChatApp</h2>
+        </div>
         <div className="sidebar-header">
           <img
             src={
@@ -360,6 +364,9 @@ export default function ChatConsole({ user, onLogout }) {
             )}
           </div>
         )}
+        <div className="sidebar-footer">
+          <span>OBS ChatApp &bull; &copy; {new Date().getFullYear()}</span>
+        </div>
       </div>
 
       {/* Main Chat Area */}
@@ -444,20 +451,29 @@ export default function ChatConsole({ user, onLogout }) {
         </div>
       ) : (
         <div className="chat-area glass empty-state">
-          <div style={{ textAlign: "center", color: "var(--text-muted)" }}>
-            <h2
-              style={{
-                marginBottom: "0.5rem",
-                color: "var(--text-main)",
-                fontSize: "1.5rem",
-                fontWeight: 600,
-              }}
-            >
-              Antigravity Chat
-            </h2>
-            <p style={{ fontSize: "0.95rem" }}>
-              Select a conversation or start a new one
-            </p>
+          <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem" }}>
+            <div className="empty-state-icon-wrapper">
+              <MessageSquare size={48} className="empty-state-icon" />
+            </div>
+            <div>
+              <h2
+                style={{
+                  marginBottom: "0.5rem",
+                  color: "var(--text-main)",
+                  fontSize: "1.8rem",
+                  fontWeight: 700,
+                  letterSpacing: "-0.5px"
+                }}
+              >
+                OBS ChatApp
+              </h2>
+              <p style={{ fontSize: "0.95rem", color: "var(--text-muted)" }}>
+                Select a conversation or start a new one
+              </p>
+            </div>
+          </div>
+          <div className="empty-state-footer">
+            <p>&copy; {new Date().getFullYear()} OBS ChatApp &bull; Designed & Developed by Omar Bin Sarwar</p>
           </div>
         </div>
       )}
