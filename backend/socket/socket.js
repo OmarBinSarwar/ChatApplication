@@ -27,6 +27,14 @@ const setupSocket = (server) => {
       socket.leave(`conversation_${conversationId}`);
     });
 
+    socket.on("join_room", (roomId) => {
+      socket.join(roomId);
+    });
+
+    socket.on("leave_room", (roomId) => {
+      socket.leave(roomId);
+    });
+
     socket.on("send_message", (message) => {
       // Broadcast to everyone in the conversation
       io.to(`conversation_${message.conversation_id}`).emit(
@@ -46,6 +54,58 @@ const setupSocket = (server) => {
       socket
         .to(`conversation_${data.conversationId}`)
         .emit("user_stop_typing", data.userId);
+    });
+
+    socket.on("call_user", (data) => {
+      const { toUserId, fromUserId, offer } = data;
+      const recipientSocketId = userSockets.get(toUserId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit("incoming_call", {
+          from: fromUserId,
+          offer,
+        });
+      }
+    });
+
+    socket.on("answer_call", (data) => {
+      const { toUserId, answer } = data;
+      const callerSocketId = userSockets.get(toUserId);
+
+      if (callerSocketId) {
+        io.to(callerSocketId).emit("call_answered", {
+          answer,
+        });
+      }
+    });
+
+    socket.on("reject_call", (data) => {
+      const { toUserId } = data;
+      const callerSocketId = userSockets.get(toUserId);
+
+      if (callerSocketId) {
+        io.to(callerSocketId).emit("call_rejected");
+      }
+    });
+
+    socket.on("send_ice_candidate", (data) => {
+      const { toUserId, candidate } = data;
+      const recipientSocketId = userSockets.get(toUserId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit("call_ice_candidate", {
+          candidate,
+        });
+      }
+    });
+
+    socket.on("end_call", (data) => {
+      const { toUserId } = data;
+      const recipientSocketId = userSockets.get(toUserId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit("call_ended");
+      }
     });
 
     socket.on("disconnect", () => {

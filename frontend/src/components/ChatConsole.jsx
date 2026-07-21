@@ -1,4 +1,17 @@
-import { Image, LogOut, Menu, Plus, Send, X, MessageSquare } from "lucide-react";
+import {
+  Image,
+  LogOut,
+  Menu,
+  Plus,
+  Send,
+  X,
+  MessageSquare,
+  Video,
+  VideoOff,
+  Mic,
+  MicOff,
+  PhoneOff,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
@@ -13,11 +26,22 @@ export default function ChatConsole({ user, onLogout }) {
   const [typingUser, setTypingUser] = useState(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [callState, setCallState] = useState({
+    incoming: null,
+    active: false,
+    localStream: null,
+    remoteStream: null,
+    isMuted: false,
+    isVideoOff: false,
+  });
 
   const socketRef = useRef();
   const messagesEndRef = useRef();
   const typingTimeoutRef = useRef();
   const chatAreaRef = useRef();
+  const peerConnectionRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
   // Handle mobile virtual keyboard
   useEffect(() => {
@@ -98,6 +122,44 @@ export default function ChatConsole({ user, onLogout }) {
       setTypingUser(null);
     });
 
+    socketRef.current.on("incoming_call", async (data) => {
+      setCallState((prev) => ({
+        ...prev,
+        incoming: {
+          from: data.from,
+          offer: data.offer,
+        },
+      }));
+    });
+
+    socketRef.current.on("call_answered", async (data) => {
+      const peerConnection = peerConnectionRef.current;
+      if (peerConnection && data.answer) {
+        try {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(data.answer),
+          );
+        } catch (error) {
+          console.error("Failed to set remote description", error);
+        }
+      }
+    });
+
+    socketRef.current.on("call_rejected", () => {
+      setCallState((prev) => ({ ...prev, incoming: null, active: false }));
+    });
+
+    socketRef.current.on("call_ice_candidate", async (data) => {
+      const peerConnection = peerConnectionRef.current;
+      if (peerConnection && data.candidate) {
+        await peerConnection.addIceCandidate(data.candidate);
+      }
+    });
+
+    socketRef.current.on("call_ended", () => {
+      endLocalCall();
+    });
+
     fetchConversations();
     fetchAllUsers();
 
@@ -116,6 +178,16 @@ export default function ChatConsole({ user, onLogout }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, typingUser]);
+
+  useEffect(() => {
+    if (localVideoRef.current && callState.localStream) {
+      localVideoRef.current.srcObject = callState.localStream;
+    }
+
+    if (remoteVideoRef.current && callState.remoteStream) {
+      remoteVideoRef.current.srcObject = callState.remoteStream;
+    }
+  }, [callState.localStream, callState.remoteStream]);
 
   const fetchConversations = async () => {
     try {
@@ -195,6 +267,152 @@ export default function ChatConsole({ user, onLogout }) {
         conversationId: activeConversation.id,
         userId: user.id,
       });
+    }
+  };
+
+  const createPeerConnection = async (remoteUserId) => {
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+
+    peerConnectionRef.current = peerConnection;
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socketRef.current.emit("send_ice_candidate", {
+          toUserId: remoteUserId,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    peerConnection.ontrack = (event) => {
+      const remoteStream = event.streams[0];
+      if (remoteStream) {
+        setCallState((prev) => ({
+          ...prev,
+          remoteStream,
+          active: true,
+        }));
+      }
+    };
+
+    return peerConnection;
+  };
+
+  const startCall = async (remoteUserId) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+
+      const peerConnection = await createPeerConnection(remoteUserId);
+      stream.getTracks().forEach((track) => {
+        peerConnection.addTrack(track, stream);
+      });
+
+      setCallState((prev) => ({
+        ...prev,
+        localStream: stream,
+        active: true,
+      }));
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      socketRef.current.emit("call_user", {
+        toUserId: remoteUserId,
+        fromUserId: user.id,
+        offer,
+      });
+    } catch (error) {
+      console.error("Unable to start call", error);
+    }
+  };
+
+  const acceptCall = async () => {
+    try {
+      const incoming = callState.incoming;
+      if (!incoming) return;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+
+      const peerConnection = await createPeerConnection(incoming.from);
+      stream.getTracks().forEach((track) => {
+        peerConnection.addTrack(track, stream);
+      });
+
+      setCallState((prev) => ({
+        ...prev,
+        localStream: stream,
+        active: true,
+        incoming: null,
+      }));
+
+      await peerConnection.setRemoteDescription(
+        new RTCSessionDescription(incoming.offer),
+      );
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+
+      socketRef.current.emit("answer_call", {
+        toUserId: incoming.from,
+        answer,
+      });
+    } catch (error) {
+      console.error("Unable to accept call", error);
+    }
+  };
+
+  const rejectCall = () => {
+    if (callState.incoming?.from) {
+      socketRef.current.emit("reject_call", {
+        toUserId: callState.incoming.from,
+      });
+    }
+    setCallState((prev) => ({ ...prev, incoming: null, active: false }));
+  };
+
+  const endLocalCall = () => {
+    if (callState.localStream) {
+      callState.localStream.getTracks().forEach((track) => track.stop());
+    }
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    setCallState((prev) => ({
+      ...prev,
+      active: false,
+      incoming: null,
+      localStream: null,
+      remoteStream: null,
+    }));
+  };
+
+  const toggleMute = () => {
+    if (callState.localStream) {
+      const audioTrack = callState.localStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setCallState((prev) => ({ ...prev, isMuted: !audioTrack.enabled }));
+      }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (callState.localStream) {
+      const videoTrack = callState.localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setCallState((prev) => ({ ...prev, isVideoOff: !videoTrack.enabled }));
+      }
     }
   };
 
@@ -389,7 +607,75 @@ export default function ChatConsole({ user, onLogout }) {
                 Active now
               </span>
             </div>
+            <button
+              className="btn"
+              style={{ marginLeft: "auto" }}
+              onClick={() => startCall(activeConversation.other_user.id)}
+              type="button"
+            >
+              <Video size={18} />
+            </button>
           </div>
+
+          {callState.incoming && (
+            <div className="call-banner">
+              <span>Incoming video call from {callState.incoming.from}</span>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button className="btn" onClick={acceptCall} type="button">
+                  Accept
+                </button>
+                <button className="btn" onClick={rejectCall} type="button">
+                  Reject
+                </button>
+              </div>
+            </div>
+          )}
+
+          {callState.active && (
+            <div className="call-panel">
+              <div className="call-video-wrap">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="call-video"
+                />
+                <span className="call-label">You</span>
+              </div>
+
+              <div className="call-video-wrap">
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="call-video"
+                />
+                <span className="call-label">Remote</span>
+              </div>
+
+              <div className="call-controls">
+                <button className="btn" onClick={toggleMute} type="button">
+                  {callState.isMuted ? <MicOff size={18} /> : <Mic size={18} />}
+                </button>
+                <button className="btn" onClick={toggleVideo} type="button">
+                  {callState.isVideoOff ? <VideoOff size={18} /> : <Video size={18} />}
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    endLocalCall();
+                    socketRef.current.emit("end_call", {
+                      toUserId: activeConversation.other_user.id,
+                    });
+                  }}
+                  type="button"
+                >
+                  <PhoneOff size={18} />
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="messages-container">
             {messages.map((m) => {
