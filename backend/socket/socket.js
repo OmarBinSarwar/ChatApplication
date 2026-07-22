@@ -68,6 +68,11 @@ const setupSocket = (server) => {
         .emit("user_stop_typing", data.userId);
     });
 
+    socket.on("message_liked", (data) => {
+      // data: { conversationId, updatedMessage }
+      io.to(`conversation_${data.conversationId}`).emit("message_liked", data.updatedMessage);
+    });
+
     socket.on("call_user", (data) => {
       const { toUserId, fromUserId, offer } = data;
       const recipientSocketId = userSockets.get(toUserId);

@@ -70,4 +70,30 @@ router.put('/:conversationId/read', authenticate, async (req, res) => {
   }
 });
 
+router.post('/:messageId/like', authenticate, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.id;
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    const alreadyLiked = message.likes.some(id => id.toString() === userId.toString());
+
+    if (alreadyLiked) {
+      // Unlike
+      await Message.findByIdAndUpdate(messageId, { $pull: { likes: userId } });
+    } else {
+      // Like
+      await Message.findByIdAndUpdate(messageId, { $push: { likes: userId } });
+    }
+
+    const updated = await Message.findById(messageId);
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

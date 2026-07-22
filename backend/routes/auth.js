@@ -21,20 +21,31 @@ const authenticate = (req, res, next) => {
 
 router.post('/register', upload.single('avatar'), async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, gender } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
+    if (!gender || !['boy', 'girl'].includes(gender)) return res.status(400).json({ error: 'Gender must be boy or girl' });
 
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ error: 'Email already in use' });
 
-    const avatar = req.file ? req.file.path : null;
+    // Use uploaded avatar, or a gender-based default avatar
+    let avatar = req.file ? req.file.path : null;
+    if (!avatar) {
+      if (gender === 'boy') {
+        avatar = 'https://api.dicebear.com/7.x/adventurer/svg?seed=boy-' + Date.now() + '&backgroundColor=b6e3f4&hair=short01,short02,short03,short04&skinColor=f2d3b1,d08b5b';
+      } else {
+        avatar = 'https://api.dicebear.com/7.x/adventurer/svg?seed=girl-' + Date.now() + '&backgroundColor=ffdfbf&hair=long01,long02,long03,long04&skinColor=f2d3b1,d08b5b';
+      }
+    }
+
     const hashedPassword = bcrypt.hashSync(password, 10);
 
     const user = await User.create({
       name,
       email,
       password: hashedPassword,
-      avatar
+      avatar,
+      gender
     });
     
     res.status(201).json(user);

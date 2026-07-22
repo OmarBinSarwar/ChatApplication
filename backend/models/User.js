@@ -21,6 +21,11 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     default: 'user',
+  },
+  gender: {
+    type: String,
+    enum: ['boy', 'girl'],
+    default: 'boy',
   }
 }, { timestamps: true });
 

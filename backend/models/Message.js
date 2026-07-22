@@ -27,6 +27,10 @@ const messageSchema = new mongoose.Schema({
   readBy: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  }],
+  likes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }]
 }, { timestamps: true });
 
@@ -40,6 +44,8 @@ messageSchema.set('toJSON', {
     ret.receiver_id = ret.receiver;
     ret.conversation_id = ret.conversationId;
     ret.date_time = ret.createdAt;
+    ret.like_count = ret.likes ? ret.likes.length : 0;
+    ret.liked_by = ret.likes ? ret.likes.map(id => id.toString()) : [];
   }
 });
 

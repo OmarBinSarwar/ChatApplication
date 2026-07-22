@@ -12,6 +12,9 @@ import {
   MicOff,
   PhoneOff,
   Monitor,
+  Phone,
+  Heart,
+  ThumbsUp,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -141,6 +144,12 @@ export default function ChatConsole({ user, onLogout }) {
 
     socketRef.current.on("user_stop_typing", () => {
       setTypingUser(null);
+    });
+
+    socketRef.current.on("message_liked", (updatedMsg) => {
+      setMessages(prev => prev.map(m =>
+        (m.id === updatedMsg.id || m._id === updatedMsg._id) ? { ...m, like_count: updatedMsg.like_count, liked_by: updatedMsg.liked_by } : m
+      ));
     });
 
     // Mesh Group Calling Sockets
@@ -338,6 +347,22 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
+  const handleLike = async (msg) => {
+    try {
+      const updated = await fetchApi(`/api/messages/${msg.id}/like`, { method: "POST" });
+      setMessages(prev => prev.map(m =>
+        m.id === msg.id ? { ...m, like_count: updated.like_count, liked_by: updated.liked_by } : m
+      ));
+      // broadcast to others in conversation
+      socketRef.current.emit("message_liked", {
+        conversationId: activeConversationRef.current?.id,
+        updatedMessage: updated
+      });
+    } catch (e) {
+      console.error("Failed to like message", e);
+    }
+  };
+
   const handleConversationClick = async (c) => {
     setActiveConversation(c);
     setSidebarOpen(false);
@@ -382,6 +407,29 @@ export default function ChatConsole({ user, onLogout }) {
       });
       setNewMessage("");
       setFile(null);
+      fetchConversations();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSendLike = async () => {
+    if (!activeConversation) return;
+    try {
+      const payload = new FormData();
+      payload.append("text", "👍");
+      if (!activeConversation.isGroup) {
+        payload.append("receiverId", activeConversation.other_user._id || activeConversation.other_user.id);
+      }
+      const msg = await fetchApi(`/api/messages/${activeConversation.id}`, {
+        method: "POST",
+        body: payload,
+      });
+      setMessages((prev) => [...prev, msg]);
+      const notifyUsers = activeConversation.isGroup
+        ? activeConversation.participants || []
+        : [activeConversation.other_user._id || activeConversation.other_user.id];
+      socketRef.current.emit("send_message", { msg, notifyUsers });
       fetchConversations();
     } catch (e) {
       console.error(e);
@@ -490,6 +538,39 @@ export default function ChatConsole({ user, onLogout }) {
       });
     } catch (error) {
       console.error("Unable to start call", error);
+    }
+  };
+
+  const startAudioCall = async (roomId) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: true,
+      });
+
+      localStreamRef.current = stream;
+      setCallState((prev) => ({
+        ...prev,
+        localStream: stream,
+        active: true,
+        incoming: null,
+        isVideoOff: true,
+      }));
+      setIsInCallRoom(true);
+
+      socketRef.current.emit("start_group_call", {
+        conversationId: roomId,
+        callerName: user.name,
+        callerId: user.id,
+      });
+
+      socketRef.current.emit("join_call_room", {
+        roomId,
+        userId: user.id,
+        name: user.name,
+      });
+    } catch (error) {
+      console.error("Unable to start audio call", error);
     }
   };
 
@@ -892,12 +973,44 @@ export default function ChatConsole({ user, onLogout }) {
               </span>
             </div>
             <button
-              className="btn"
-              style={{ marginLeft: "auto" }}
+              title="Audio Call"
+              style={{
+                marginLeft: "auto",
+                background: "rgba(255,255,255,0.07)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "50%",
+                width: 36,
+                height: 36,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: "#4ade80",
+                marginRight: "0.4rem",
+              }}
+              onClick={() => startAudioCall(activeConversation.id)}
+              type="button"
+            >
+              <Phone size={17} />
+            </button>
+            <button
+              title="Video Call"
+              style={{
+                background: "rgba(255,255,255,0.07)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "50%",
+                width: 36,
+                height: 36,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: "#a78bfa",
+              }}
               onClick={() => startCall(activeConversation.id)}
               type="button"
             >
-              <Video size={18} />
+              <Video size={17} />
             </button>
           </div>
 
@@ -983,7 +1096,31 @@ export default function ChatConsole({ user, onLogout }) {
                       {senderName}
                     </span>
                   )}
-                  {m.text && <div className="message-bubble">{m.text}</div>}
+                  {m.text && (
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: "4px" }}>
+                      <div className="message-bubble">{m.text}</div>
+                      <button
+                        onClick={() => handleLike(m)}
+                        title="Like"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: "2px 4px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "2px",
+                          color: m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "rgba(255,255,255,0.3)",
+                          fontSize: "0.72rem",
+                          flexShrink: 0,
+                          transition: "color 0.2s",
+                        }}
+                      >
+                        <Heart size={13} fill={m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "none"} />
+                        {m.like_count > 0 && <span>{m.like_count}</span>}
+                      </button>
+                    </div>
+                  )}
                   {m.attachment && (
                     <img
                       src={`${BASE_URL}${m.attachment}`}
@@ -1023,14 +1160,25 @@ export default function ChatConsole({ user, onLogout }) {
               onChange={handleTyping}
               maxLength="500"
             />
-            <button
-              type="submit"
-              className="send-btn"
-              disabled={!newMessage.trim() && !file}
-              title="Send message"
-            >
-              <Send size={18} />
-            </button>
+            {newMessage.trim() || file ? (
+              <button
+                type="submit"
+                className="send-btn"
+                title="Send message"
+              >
+                <Send size={18} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="send-btn"
+                onClick={handleSendLike}
+                title="Send like"
+                style={{ background: "linear-gradient(135deg, #f59e0b, #ef4444)" }}
+              >
+                <ThumbsUp size={18} />
+              </button>
+            )}
           </form>
         </div>
       ) : (
