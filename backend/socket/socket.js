@@ -1,6 +1,7 @@
 const socketIo = require("socket.io");
 
 const userSockets = new Map(); // Map user.id to socket.id
+const callRooms = new Map(); // Map roomId to Map of participants
 
 const setupSocket = (server) => {
   const io = socketIo(server, {
@@ -108,7 +109,113 @@ const setupSocket = (server) => {
       }
     });
 
+    // Room-based WebRTC signaling for group calls
+    socket.on("join_call_room", (data) => {
+      const { roomId, userId, name } = data;
+      socket.join(`call_${roomId}`);
+      
+      if (!callRooms.has(roomId)) {
+        callRooms.set(roomId, new Map());
+      }
+      
+      const roomParticipants = callRooms.get(roomId);
+      const existingParticipants = Array.from(roomParticipants.values());
+      
+      roomParticipants.set(socket.id, {
+        socketId: socket.id,
+        userId,
+        name,
+        isScreenSharing: false
+      });
+      
+      console.log(`User ${name} (${userId}) joined call room ${roomId}`);
+      
+      socket.to(`call_${roomId}`).emit("user_joined_call", {
+        socketId: socket.id,
+        userId,
+        name
+      });
+      
+      socket.emit("current_call_participants", existingParticipants);
+    });
+    
+    socket.on("send_call_signal", (data) => {
+      const { targetSocketId, signalData, isScreenSharing } = data;
+      io.to(targetSocketId).emit("receive_call_signal", {
+        fromSocketId: socket.id,
+        signalData,
+        isScreenSharing
+      });
+    });
+    
+    socket.on("send_call_ice_candidate", (data) => {
+      const { targetSocketId, candidate } = data;
+      io.to(targetSocketId).emit("receive_call_ice_candidate", {
+        fromSocketId: socket.id,
+        candidate
+      });
+    });
+    
+    socket.on("leave_call_room", (roomId) => {
+      socket.leave(`call_${roomId}`);
+      
+      const roomParticipants = callRooms.get(roomId);
+      if (roomParticipants) {
+        const participantInfo = roomParticipants.get(socket.id);
+        if (participantInfo) {
+          roomParticipants.delete(socket.id);
+          socket.to(`call_${roomId}`).emit("user_left_call", {
+            socketId: socket.id,
+            userId: participantInfo.userId
+          });
+        }
+        
+        if (roomParticipants.size === 0) {
+          callRooms.delete(roomId);
+        }
+      }
+      console.log(`User left call room ${roomId}`);
+    });
+    
+    socket.on("toggle_screenshare_signal", (data) => {
+      const { roomId, isSharing } = data;
+      const roomParticipants = callRooms.get(roomId);
+      if (roomParticipants && roomParticipants.has(socket.id)) {
+        roomParticipants.get(socket.id).isScreenSharing = isSharing;
+        socket.to(`call_${roomId}`).emit("user_toggled_screenshare", {
+          socketId: socket.id,
+          isSharing
+        });
+      }
+    });
+
+    socket.on("start_group_call", (data) => {
+      // data: { conversationId, callerName, callerId }
+      socket.to(`conversation_${data.conversationId}`).emit("group_call_incoming", data);
+    });
+
+    socket.on("end_group_call", (data) => {
+      // data: { conversationId }
+      socket.to(`conversation_${data.conversationId}`).emit("group_call_ended", data);
+    });
+
     socket.on("disconnect", () => {
+      // Clean up call rooms
+      for (const [roomId, roomParticipants] of callRooms.entries()) {
+        if (roomParticipants.has(socket.id)) {
+          const participantInfo = roomParticipants.get(socket.id);
+          roomParticipants.delete(socket.id);
+          socket.to(`call_${roomId}`).emit("user_left_call", {
+            socketId: socket.id,
+            userId: participantInfo.userId
+          });
+          
+          if (roomParticipants.size === 0) {
+            callRooms.delete(roomId);
+          }
+        }
+      }
+
       // Find and remove user from map
       for (const [userId, socketId] of userSockets.entries()) {
         if (socketId === socket.id) {

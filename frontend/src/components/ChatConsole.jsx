@@ -11,6 +11,7 @@ import {
   Mic,
   MicOff,
   PhoneOff,
+  Monitor,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -26,11 +27,20 @@ export default function ChatConsole({ user, onLogout }) {
   const [typingUser, setTypingUser] = useState(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Group creation state
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [selectedParticipants, setSelectedParticipants] = useState([]);
+
+  // Mesh video calling state
+  const [isInCallRoom, setIsInCallRoom] = useState(false);
+  const [remoteStreams, setRemoteStreams] = useState([]); // Array of { socketId, userId, name, stream, isScreenSharing }
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [callState, setCallState] = useState({
-    incoming: null,
+    incoming: null, // { conversationId, callerName, callerId }
     active: false,
     localStream: null,
-    remoteStream: null,
     isMuted: false,
     isVideoOff: false,
   });
@@ -39,9 +49,12 @@ export default function ChatConsole({ user, onLogout }) {
   const messagesEndRef = useRef();
   const typingTimeoutRef = useRef();
   const chatAreaRef = useRef();
-  const peerConnectionRef = useRef(null);
+  
+  // Mesh refs
+  const pcsRef = useRef({}); // remoteSocketId -> RTCPeerConnection
+  const localStreamRef = useRef(null);
+  const cameraVideoTrackRef = useRef(null);
   const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
 
   // Handle mobile virtual keyboard
   useEffect(() => {
@@ -112,7 +125,6 @@ export default function ChatConsole({ user, onLogout }) {
     });
 
     socketRef.current.on("user_typing", (uId) => {
-      // Find user name if needed, here we just show typing...
       setTypingUser("typing...");
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => setTypingUser(null), 3000);
@@ -122,42 +134,98 @@ export default function ChatConsole({ user, onLogout }) {
       setTypingUser(null);
     });
 
-    socketRef.current.on("incoming_call", async (data) => {
+    // Mesh Group Calling Sockets
+    socketRef.current.on("group_call_incoming", (data) => {
       setCallState((prev) => ({
         ...prev,
         incoming: {
-          from: data.from,
-          offer: data.offer,
+          conversationId: data.conversationId,
+          callerName: data.callerName,
+          callerId: data.callerId,
         },
       }));
     });
 
-    socketRef.current.on("call_answered", async (data) => {
-      const peerConnection = peerConnectionRef.current;
-      if (peerConnection && data.answer) {
+    socketRef.current.on("group_call_ended", (data) => {
+      setCallState((prev) => {
+        if (prev.incoming && prev.incoming.conversationId === data.conversationId) {
+          return { ...prev, incoming: null };
+        }
+        return prev;
+      });
+    });
+
+    socketRef.current.on("user_joined_call", async (data) => {
+      const { socketId, userId, name } = data;
+      console.log("User joined call:", name, socketId);
+      const pc = createPeerConnection(socketId, userId, name);
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socketRef.current.emit("send_call_signal", {
+          targetSocketId: socketId,
+          signalData: offer,
+        });
+      } catch (err) {
+        console.error("Failed to create offer for new user", err);
+      }
+    });
+
+    socketRef.current.on("receive_call_signal", async (data) => {
+      const { fromSocketId, signalData } = data;
+      console.log("Received call signal from:", fromSocketId, signalData.type);
+      const pc = createPeerConnection(fromSocketId, null, null);
+      
+      if (signalData.type === "offer") {
         try {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(data.answer),
-          );
-        } catch (error) {
-          console.error("Failed to set remote description", error);
+          await pc.setRemoteDescription(new RTCSessionDescription(signalData));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socketRef.current.emit("send_call_signal", {
+            targetSocketId: fromSocketId,
+            signalData: answer,
+          });
+        } catch (err) {
+          console.error("Failed to answer offer", err);
+        }
+      } else if (signalData.type === "answer") {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(signalData));
+        } catch (err) {
+          console.error("Failed to set remote description answer", err);
         }
       }
     });
 
-    socketRef.current.on("call_rejected", () => {
-      setCallState((prev) => ({ ...prev, incoming: null, active: false }));
-    });
-
-    socketRef.current.on("call_ice_candidate", async (data) => {
-      const peerConnection = peerConnectionRef.current;
-      if (peerConnection && data.candidate) {
-        await peerConnection.addIceCandidate(data.candidate);
+    socketRef.current.on("receive_call_ice_candidate", async (data) => {
+      const { fromSocketId, candidate } = data;
+      const pc = pcsRef.current[fromSocketId];
+      if (pc) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.error("Failed to add ice candidate", err);
+        }
       }
     });
 
-    socketRef.current.on("call_ended", () => {
-      endLocalCall();
+    socketRef.current.on("user_left_call", (data) => {
+      const { socketId } = data;
+      console.log("User left call:", socketId);
+      if (pcsRef.current[socketId]) {
+        pcsRef.current[socketId].close();
+        delete pcsRef.current[socketId];
+      }
+      setRemoteStreams((prev) => prev.filter((s) => s.socketId !== socketId));
+    });
+
+    socketRef.current.on("user_toggled_screenshare", (data) => {
+      const { socketId, isSharing } = data;
+      setRemoteStreams((prev) =>
+        prev.map((s) =>
+          s.socketId === socketId ? { ...s, isScreenSharing: isSharing } : s
+        )
+      );
     });
 
     fetchConversations();
@@ -183,11 +251,7 @@ export default function ChatConsole({ user, onLogout }) {
     if (localVideoRef.current && callState.localStream) {
       localVideoRef.current.srcObject = callState.localStream;
     }
-
-    if (remoteVideoRef.current && callState.remoteStream) {
-      remoteVideoRef.current.srcObject = callState.remoteStream;
-    }
-  }, [callState.localStream, callState.remoteStream]);
+  }, [callState.localStream]);
 
   const fetchConversations = async () => {
     try {
@@ -233,6 +297,32 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
+  const handleStartGroupChat = async (e) => {
+    e.preventDefault();
+    if (!groupName.trim() || selectedParticipants.length === 0) return;
+
+    try {
+      const conv = await fetchApi("/api/conversations/group", {
+        method: "POST",
+        body: {
+          groupName: groupName.trim(),
+          participantIds: selectedParticipants,
+        },
+      });
+      await fetchConversations();
+      const updatedConv = await fetchApi("/api/conversations").then((res) =>
+        res.find((c) => c.id === conv.id),
+      );
+      setActiveConversation(updatedConv);
+      setShowUsersPanel(false);
+      setIsCreatingGroup(false);
+      setGroupName("");
+      setSelectedParticipants([]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() && !file) return;
@@ -240,7 +330,9 @@ export default function ChatConsole({ user, onLogout }) {
     try {
       const payload = new FormData();
       payload.append("text", newMessage);
-      payload.append("receiverId", activeConversation.other_user.id);
+      if (activeConversation && !activeConversation.isGroup) {
+        payload.append("receiverId", activeConversation.other_user.id);
+      }
       if (file) payload.append("attachment", file);
 
       const msg = await fetchApi(`/api/messages/${activeConversation.id}`, {
@@ -270,61 +362,95 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
-  const createPeerConnection = async (remoteUserId) => {
-    const peerConnection = new RTCPeerConnection({
+  const createPeerConnection = (remoteSocketId, remoteUserId, remoteName) => {
+    if (pcsRef.current[remoteSocketId]) {
+      return pcsRef.current[remoteSocketId];
+    }
+
+    const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
-    peerConnectionRef.current = peerConnection;
+    pcsRef.current[remoteSocketId] = pc;
 
-    peerConnection.onicecandidate = (event) => {
+    pc.onicecandidate = (event) => {
       if (event.candidate) {
-        socketRef.current.emit("send_ice_candidate", {
-          toUserId: remoteUserId,
+        socketRef.current.emit("send_call_ice_candidate", {
+          targetSocketId: remoteSocketId,
           candidate: event.candidate,
         });
       }
     };
 
-    peerConnection.ontrack = (event) => {
+    pc.ontrack = (event) => {
       const remoteStream = event.streams[0];
-      if (remoteStream) {
-        setCallState((prev) => ({
+      setRemoteStreams((prev) => {
+        if (prev.some((s) => s.socketId === remoteSocketId)) {
+          return prev.map((s) =>
+            s.socketId === remoteSocketId ? { ...s, stream: remoteStream } : s
+          );
+        }
+        
+        let displayName = remoteName;
+        if (!displayName && activeConversation) {
+          if (activeConversation.isGroup) {
+            const participant = activeConversation.participants.find(p => p.id === remoteUserId);
+            if (participant) displayName = participant.name;
+          } else {
+            displayName = activeConversation.other_user.name;
+          }
+        }
+        if (!displayName) displayName = "User";
+
+        return [
           ...prev,
-          remoteStream,
-          active: true,
-        }));
-      }
+          {
+            socketId: remoteSocketId,
+            userId: remoteUserId,
+            name: displayName,
+            stream: remoteStream,
+            isScreenSharing: false,
+          },
+        ];
+      });
     };
 
-    return peerConnection;
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc.addTrack(track, localStreamRef.current);
+      });
+    }
+
+    return pc;
   };
 
-  const startCall = async (remoteUserId) => {
+  const startCall = async (roomId) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
-      const peerConnection = await createPeerConnection(remoteUserId);
-      stream.getTracks().forEach((track) => {
-        peerConnection.addTrack(track, stream);
-      });
-
+      localStreamRef.current = stream;
       setCallState((prev) => ({
         ...prev,
         localStream: stream,
         active: true,
+        incoming: null,
       }));
+      setIsInCallRoom(true);
 
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
+      // Notify other conversation members of call
+      socketRef.current.emit("start_group_call", {
+        conversationId: roomId,
+        callerName: user.name,
+        callerId: user.id,
+      });
 
-      socketRef.current.emit("call_user", {
-        toUserId: remoteUserId,
-        fromUserId: user.id,
-        offer,
+      socketRef.current.emit("join_call_room", {
+        roomId,
+        userId: user.id,
+        name: user.name,
       });
     } catch (error) {
       console.error("Unable to start call", error);
@@ -332,59 +458,29 @@ export default function ChatConsole({ user, onLogout }) {
   };
 
   const acceptCall = async () => {
-    try {
-      const incoming = callState.incoming;
-      if (!incoming) return;
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-
-      const peerConnection = await createPeerConnection(incoming.from);
-      stream.getTracks().forEach((track) => {
-        peerConnection.addTrack(track, stream);
-      });
-
-      setCallState((prev) => ({
-        ...prev,
-        localStream: stream,
-        active: true,
-        incoming: null,
-      }));
-
-      await peerConnection.setRemoteDescription(
-        new RTCSessionDescription(incoming.offer),
-      );
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-
-      socketRef.current.emit("answer_call", {
-        toUserId: incoming.from,
-        answer,
-      });
-    } catch (error) {
-      console.error("Unable to accept call", error);
-    }
+    const incoming = callState.incoming;
+    if (!incoming) return;
+    startCall(incoming.conversationId);
   };
 
   const rejectCall = () => {
-    if (callState.incoming?.from) {
-      socketRef.current.emit("reject_call", {
-        toUserId: callState.incoming.from,
-      });
-    }
     setCallState((prev) => ({ ...prev, incoming: null, active: false }));
   };
 
   const endLocalCall = () => {
-    if (callState.localStream) {
-      callState.localStream.getTracks().forEach((track) => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
 
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
+    for (const socketId in pcsRef.current) {
+      pcsRef.current[socketId].close();
+    }
+    pcsRef.current = {};
+
+    if (activeConversation) {
+      socketRef.current.emit("leave_call_room", activeConversation.id);
+      socketRef.current.emit("end_group_call", { conversationId: activeConversation.id });
     }
 
     setCallState((prev) => ({
@@ -392,13 +488,95 @@ export default function ChatConsole({ user, onLogout }) {
       active: false,
       incoming: null,
       localStream: null,
-      remoteStream: null,
     }));
+    setRemoteStreams([]);
+    setIsInCallRoom(false);
+    setIsScreenSharing(false);
+  };
+
+  const toggleScreenShare = async () => {
+    if (!isScreenSharing) {
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        
+        cameraVideoTrackRef.current = localStreamRef.current.getVideoTracks()[0];
+        
+        for (const socketId in pcsRef.current) {
+          const pc = pcsRef.current[socketId];
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(screenTrack);
+          }
+        }
+        
+        if (cameraVideoTrackRef.current) {
+          localStreamRef.current.removeTrack(cameraVideoTrackRef.current);
+          localStreamRef.current.addTrack(screenTrack);
+        }
+        
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+        }
+
+        screenTrack.onended = () => {
+          stopScreenShare(screenTrack);
+        };
+        
+        socketRef.current.emit("toggle_screenshare_signal", {
+          roomId: activeConversation.id,
+          isSharing: true
+        });
+        setIsScreenSharing(true);
+      } catch (err) {
+        console.error("Failed to share screen", err);
+      }
+    } else {
+      const screenTrack = localStreamRef.current.getVideoTracks()[0];
+      stopScreenShare(screenTrack);
+    }
+  };
+
+  const stopScreenShare = async (screenTrack) => {
+    if (screenTrack) {
+      screenTrack.stop();
+    }
+    
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const cameraTrack = camStream.getVideoTracks()[0];
+      
+      if (localStreamRef.current) {
+        const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
+        if (currentVideoTrack) localStreamRef.current.removeTrack(currentVideoTrack);
+        localStreamRef.current.addTrack(cameraTrack);
+      }
+      
+      for (const socketId in pcsRef.current) {
+        const pc = pcsRef.current[socketId];
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(cameraTrack);
+        }
+      }
+      
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+    } catch (err) {
+      console.error("Failed to restore camera stream", err);
+    }
+    
+    socketRef.current.emit("toggle_screenshare_signal", {
+      roomId: activeConversation.id,
+      isSharing: false
+    });
+    setIsScreenSharing(false);
   };
 
   const toggleMute = () => {
-    if (callState.localStream) {
-      const audioTrack = callState.localStream.getAudioTracks()[0];
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setCallState((prev) => ({ ...prev, isMuted: !audioTrack.enabled }));
@@ -407,8 +585,8 @@ export default function ChatConsole({ user, onLogout }) {
   };
 
   const toggleVideo = () => {
-    if (callState.localStream) {
-      const videoTrack = callState.localStream.getVideoTracks()[0];
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setCallState((prev) => ({ ...prev, isVideoOff: !videoTrack.enabled }));
@@ -472,17 +650,73 @@ export default function ChatConsole({ user, onLogout }) {
           style={{
             padding: "1rem",
             borderBottom: "1px solid var(--panel-border)",
+            display: "flex",
+            gap: "0.5rem",
           }}
         >
           <button
             className="btn new-chat-btn"
-            onClick={() => setShowUsersPanel(!showUsersPanel)}
+            style={{ flex: 1 }}
+            onClick={() => {
+              setShowUsersPanel(!showUsersPanel);
+              setIsCreatingGroup(false);
+            }}
           >
             <Plus size={18} /> <span>New Chat</span>
           </button>
+          <button
+            className="btn new-chat-btn"
+            style={{ flex: 1, background: "rgba(255, 255, 255, 0.07)" }}
+            onClick={() => {
+              setShowUsersPanel(true);
+              setIsCreatingGroup(true);
+              setSelectedParticipants([]);
+              setGroupName("");
+            }}
+          >
+            <Plus size={18} /> <span>New Group</span>
+          </button>
         </div>
 
-        {showUsersPanel ? (
+        {showUsersPanel && isCreatingGroup ? (
+          <div className="conversations-list">
+            <form onSubmit={handleStartGroupChat} style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+              <h4 style={{ color: "var(--text-muted)", fontSize: "0.8rem", textTransform: "uppercase", fontWeight: 600, margin: 0 }}>Create Group</h4>
+              <input
+                type="text"
+                placeholder="Group Name..."
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                className="chat-input"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid var(--panel-border)", padding: "0.6rem 0.8rem", borderRadius: "8px", color: "white" }}
+                required
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "200px", overflowY: "auto", paddingRight: "0.25rem" }}>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Select Participants:</span>
+                {users.map((u) => (
+                  <label key={u.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.9rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedParticipants.includes(u.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedParticipants(prev => [...prev, u.id]);
+                        } else {
+                          setSelectedParticipants(prev => prev.filter(id => id !== u.id));
+                        }
+                      }}
+                    />
+                    <span>{u.name}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button type="submit" className="btn" style={{ flex: 1 }}>Create</button>
+                <button type="button" className="btn" style={{ flex: 1, background: "rgba(255,255,255,0.05)" }} onClick={() => { setIsCreatingGroup(false); setShowUsersPanel(false); }}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        ) : showUsersPanel ? (
           <div className="conversations-list">
             <h4
               style={{
@@ -545,40 +779,40 @@ export default function ChatConsole({ user, onLogout }) {
                 No conversations yet
               </div>
             ) : (
-              conversations.map((c) => (
-                <div
-                  key={c.id}
-                  className={`conversation-item ${activeConversation?.id === c.id ? "active" : ""}`}
-                  onClick={() => {
-                    setActiveConversation(c);
-                    setSidebarOpen(false);
-                  }}
-                >
-                  <img
-                    src={
-                      c.other_user.avatar
-                        ? `${BASE_URL}${c.other_user.avatar}`
-                        : "https://ui-avatars.com/api/?name=" +
-                          c.other_user.name
-                    }
-                    className="avatar"
-                    style={{ width: 40, height: 40 }}
-                    alt=""
-                  />
-                  <div style={{ flex: 1, overflow: "hidden" }}>
-                    <div
-                      style={{
-                        fontWeight: 500,
-                        textOverflow: "ellipsis",
-                        overflow: "hidden",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {c.other_user.name}
+              conversations.map((c) => {
+                const name = c.isGroup ? c.groupName : c.other_user.name;
+                const avatarUrl = !c.isGroup && c.other_user.avatar ? `${BASE_URL}${c.other_user.avatar}` : null;
+                return (
+                  <div
+                    key={c.id}
+                    className={`conversation-item ${activeConversation?.id === c.id ? "active" : ""}`}
+                    onClick={() => {
+                      setActiveConversation(c);
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    {avatarUrl ? (
+                      <img src={avatarUrl} className="avatar" style={{ width: 40, height: 40 }} alt="" />
+                    ) : (
+                      <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%" }}>
+                        {name.substring(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div style={{ flex: 1, overflow: "hidden" }}>
+                      <div
+                        style={{
+                          fontWeight: 500,
+                          textOverflow: "ellipsis",
+                          overflow: "hidden",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {name}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -591,41 +825,45 @@ export default function ChatConsole({ user, onLogout }) {
       {activeConversation ? (
         <div className="chat-area glass" ref={chatAreaRef}>
           <div className="chat-header">
-            <img
-              src={
-                activeConversation.other_user.avatar
-                  ? `${BASE_URL}${activeConversation.other_user.avatar}`
-                  : "https://ui-avatars.com/api/?name=" +
-                    activeConversation.other_user.name
-              }
-              className="avatar"
-              alt=""
-            />
+            {(!activeConversation.isGroup && activeConversation.other_user.avatar) ? (
+              <img
+                src={`${BASE_URL}${activeConversation.other_user.avatar}`}
+                className="avatar"
+                alt=""
+              />
+            ) : (
+              <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%", marginRight: "0.75rem" }}>
+                {(activeConversation.isGroup ? activeConversation.groupName : activeConversation.other_user.name).substring(0, 2).toUpperCase()}
+              </div>
+            )}
             <div className="chat-header-info">
-              <h3>{activeConversation.other_user.name}</h3>
+              <h3>{activeConversation.isGroup ? activeConversation.groupName : activeConversation.other_user.name}</h3>
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                Active now
+                {activeConversation.isGroup 
+                  ? `${activeConversation.participants?.length || 0} participants` 
+                  : "Active now"
+                }
               </span>
             </div>
             <button
               className="btn"
               style={{ marginLeft: "auto" }}
-              onClick={() => startCall(activeConversation.other_user.id)}
+              onClick={() => startCall(activeConversation.id)}
               type="button"
             >
               <Video size={18} />
             </button>
           </div>
 
-          {callState.incoming && (
+          {callState.incoming && callState.incoming.conversationId === activeConversation.id && (
             <div className="call-banner">
-              <span>Incoming video call from {callState.incoming.from}</span>
+              <span>Active call started by {callState.incoming.callerName}</span>
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button className="btn" onClick={acceptCall} type="button">
-                  Accept
+                  Join Call
                 </button>
                 <button className="btn" onClick={rejectCall} type="button">
-                  Reject
+                  Dismiss
                 </button>
               </div>
             </div>
@@ -641,35 +879,39 @@ export default function ChatConsole({ user, onLogout }) {
                   playsInline
                   className="call-video"
                 />
-                <span className="call-label">You</span>
+                <span className="call-label">You {isScreenSharing && "(Sharing Screen)"}</span>
               </div>
 
-              <div className="call-video-wrap">
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  playsInline
-                  className="call-video"
-                />
-                <span className="call-label">Remote</span>
-              </div>
+              {remoteStreams.map((remote) => (
+                <div key={remote.socketId} className="call-video-wrap">
+                  <video
+                    ref={(el) => {
+                      if (el) el.srcObject = remote.stream;
+                    }}
+                    autoPlay
+                    playsInline
+                    className="call-video"
+                  />
+                  <span className="call-label">{remote.name} {remote.isScreenSharing && "(Sharing Screen)"}</span>
+                </div>
+              ))}
 
               <div className="call-controls">
-                <button className="btn" onClick={toggleMute} type="button">
+                <button className="btn" onClick={toggleMute} type="button" title="Mute Audio">
                   {callState.isMuted ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
-                <button className="btn" onClick={toggleVideo} type="button">
+                <button className="btn" onClick={toggleVideo} type="button" title="Toggle Camera">
                   {callState.isVideoOff ? <VideoOff size={18} /> : <Video size={18} />}
+                </button>
+                <button className="btn" onClick={toggleScreenShare} type="button" title="Share Screen">
+                  <Monitor size={18} style={{ color: isScreenSharing ? "var(--accent-purple)" : "white" }} />
                 </button>
                 <button
                   className="btn"
-                  onClick={() => {
-                    endLocalCall();
-                    socketRef.current.emit("end_call", {
-                      toUserId: activeConversation.other_user.id,
-                    });
-                  }}
+                  onClick={endLocalCall}
                   type="button"
+                  style={{ backgroundColor: "#ef4444" }}
+                  title="Hang Up"
                 >
                   <PhoneOff size={18} />
                 </button>
@@ -680,11 +922,21 @@ export default function ChatConsole({ user, onLogout }) {
           <div className="messages-container">
             {messages.map((m) => {
               const isSent = m.sender_id === user.id;
+              let senderName = "User";
+              if (!isSent && activeConversation.isGroup) {
+                const participant = activeConversation.participants?.find(p => p.id === m.sender_id || p._id === m.sender_id);
+                if (participant) senderName = participant.name;
+              }
               return (
                 <div
                   key={m.id}
                   className={`message-wrapper ${isSent ? "sent" : "received"}`}
                 >
+                  {!isSent && activeConversation.isGroup && (
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block", fontWeight: "600" }}>
+                      {senderName}
+                    </span>
+                  )}
                   {m.text && <div className="message-bubble">{m.text}</div>}
                   {m.attachment && (
                     <img

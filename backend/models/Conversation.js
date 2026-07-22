@@ -9,8 +9,20 @@ const conversationSchema = new mongoose.Schema({
   participant: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    required: false,
   },
+  isGroup: {
+    type: Boolean,
+    default: false,
+  },
+  groupName: {
+    type: String,
+    default: '',
+  },
+  participants: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
   lastUpdated: {
     type: Date,
     default: Date.now,

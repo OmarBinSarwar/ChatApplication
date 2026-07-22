@@ -22,7 +22,16 @@ router.post('/:conversationId', authenticate, upload.single('attachment'), async
     const { text, receiverId } = req.body;
     const senderId = req.user.id;
     
-    if (!receiverId) return res.status(400).json({ error: 'receiverId is required' });
+    let finalReceiverId = receiverId;
+    if (!finalReceiverId) {
+      const conv = await Conversation.findById(conversationId);
+      if (!conv) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+      if (!conv.isGroup) {
+        return res.status(400).json({ error: 'receiverId is required for 1-to-1 conversations' });
+      }
+    }
 
     const attachment = req.file ? req.file.path : null;
     
@@ -30,7 +39,7 @@ router.post('/:conversationId', authenticate, upload.single('attachment'), async
       text: text || '',
       attachment,
       sender: senderId,
-      receiver: receiverId,
+      receiver: finalReceiverId || null,
       conversationId
     });
     
