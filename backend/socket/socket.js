@@ -36,12 +36,23 @@ const setupSocket = (server) => {
       socket.leave(roomId);
     });
 
-    socket.on("send_message", (message) => {
-      // Broadcast to everyone in the conversation
-      io.to(`conversation_${message.conversation_id}`).emit(
-        "new_message",
-        message,
-      );
+    socket.on("send_message", (data) => {
+      const message = data.msg || data;
+      const notifyUsers = data.notifyUsers || [];
+
+      let emitter = io.to(`conversation_${message.conversation_id}`);
+
+      if (message.receiver_id) {
+        const receiverSocketId = userSockets.get(message.receiver_id.toString());
+        if (receiverSocketId) emitter = emitter.to(receiverSocketId);
+      }
+
+      for (const uId of notifyUsers) {
+        const sId = userSockets.get(uId.toString());
+        if (sId) emitter = emitter.to(sId);
+      }
+
+      emitter.emit("new_message", message);
     });
 
     socket.on("typing", (data) => {

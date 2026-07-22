@@ -40,12 +40,30 @@ router.post('/:conversationId', authenticate, upload.single('attachment'), async
       attachment,
       sender: senderId,
       receiver: finalReceiverId || null,
-      conversationId
+      conversationId,
+      readBy: [senderId]
     });
     
     await Conversation.findByIdAndUpdate(conversationId, { lastUpdated: Date.now() });
     
     res.status(201).json(newMsg);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:conversationId/read', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+    
+    await Message.updateMany(
+      { conversationId, readBy: { $ne: userId } },
+      { $push: { readBy: userId } }
+    );
+    
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

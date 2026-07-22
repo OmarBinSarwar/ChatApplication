@@ -49,6 +49,11 @@ export default function ChatConsole({ user, onLogout }) {
   const messagesEndRef = useRef();
   const typingTimeoutRef = useRef();
   const chatAreaRef = useRef();
+  const activeConversationRef = useRef(activeConversation);
+  
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
   
   // Mesh refs
   const pcsRef = useRef({}); // remoteSocketId -> RTCPeerConnection
@@ -114,9 +119,13 @@ export default function ChatConsole({ user, onLogout }) {
       setMessages((prev) => {
         // Check if message belongs to active conversation
         if (
-          activeConversation &&
-          msg.conversation_id === activeConversation.id
+          activeConversationRef.current &&
+          msg.conversation_id === activeConversationRef.current.id
         ) {
+          // Prevent duplicate messages if already appended locally
+          if (prev.some((m) => m._id === msg._id || m.id === msg.id)) {
+            return prev;
+          }
           return [...prev, msg];
         }
         return prev;
@@ -234,7 +243,7 @@ export default function ChatConsole({ user, onLogout }) {
     return () => {
       socketRef.current.disconnect();
     };
-  }, [user.id, activeConversation]);
+  }, [user.id]);
 
   useEffect(() => {
     if (activeConversation) {
@@ -256,7 +265,13 @@ export default function ChatConsole({ user, onLogout }) {
   const fetchConversations = async () => {
     try {
       const data = await fetchApi("/api/conversations");
-      setConversations(data);
+      const sortedData = data.sort((a, b) => new Date(b.last_updated) - new Date(a.last_updated));
+      setConversations(sortedData);
+      
+      // Join all conversation rooms so we receive new_message events for background chats!
+      data.forEach(c => {
+        if (socketRef.current) socketRef.current.emit("join_conversation", c.id);
+      });
     } catch (e) {
       console.error(e);
     }
@@ -323,6 +338,19 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
+  const handleConversationClick = async (c) => {
+    setActiveConversation(c);
+    setSidebarOpen(false);
+    if (c.unreadCount > 0) {
+      try {
+        await fetchApi(`/api/messages/${c.id}/read`, { method: "PUT" });
+        setConversations(prev => prev.map(conv => conv.id === c.id ? { ...conv, unreadCount: 0 } : conv));
+      } catch (e) {
+        console.error("Failed to mark as read", e);
+      }
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() && !file) return;
@@ -340,13 +368,21 @@ export default function ChatConsole({ user, onLogout }) {
         body: payload,
       });
 
-      socketRef.current.emit("send_message", msg);
+      // Instant feedback for sender
+      setMessages((prev) => [...prev, msg]);
+
+      const notifyUsers = activeConversation.isGroup 
+        ? activeConversation.participants || []
+        : [activeConversation.other_user._id || activeConversation.other_user.id];
+
+      socketRef.current.emit("send_message", { msg, notifyUsers });
       socketRef.current.emit("stop_typing", {
         conversationId: activeConversation.id,
         userId: user.id,
       });
       setNewMessage("");
       setFile(null);
+      fetchConversations();
     } catch (e) {
       console.error(e);
     }
@@ -786,10 +822,7 @@ export default function ChatConsole({ user, onLogout }) {
                   <div
                     key={c.id}
                     className={`conversation-item ${activeConversation?.id === c.id ? "active" : ""}`}
-                    onClick={() => {
-                      setActiveConversation(c);
-                      setSidebarOpen(false);
-                    }}
+                    onClick={() => handleConversationClick(c)}
                   >
                     {avatarUrl ? (
                       <img src={avatarUrl} className="avatar" style={{ width: 40, height: 40 }} alt="" />
@@ -810,6 +843,19 @@ export default function ChatConsole({ user, onLogout }) {
                         {name}
                       </div>
                     </div>
+                    {c.unreadCount > 0 && (
+                      <div style={{
+                        background: "#ef4444",
+                        color: "white",
+                        borderRadius: "10px",
+                        padding: "2px 6px",
+                        fontSize: "0.75rem",
+                        fontWeight: "bold",
+                        marginLeft: "auto"
+                      }}>
+                        {c.unreadCount}
+                      </div>
+                    )}
                   </div>
                 );
               })

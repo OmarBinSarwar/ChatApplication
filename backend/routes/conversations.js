@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticate } = require('./auth');
 const Conversation = require('../models/Conversation');
+const Message = require('../models/Message');
 const router = express.Router();
 
 router.get('/', authenticate, async (req, res) => {
@@ -15,7 +16,12 @@ router.get('/', authenticate, async (req, res) => {
     .populate('participants', 'name avatar')
     .sort({ lastUpdated: -1 });
     
-    const formatted = conversations.map(c => {
+    const formatted = await Promise.all(conversations.map(async (c) => {
+      const unreadCount = await Message.countDocuments({
+        conversationId: c._id,
+        readBy: { $ne: userId }
+      });
+      
       if (c.isGroup) {
         return {
           id: c._id,
@@ -27,7 +33,8 @@ router.get('/', authenticate, async (req, res) => {
             name: c.groupName,
             avatar: ''
           },
-          last_updated: c.lastUpdated
+          last_updated: c.lastUpdated,
+          unreadCount
         };
       }
       const isCreator = c.creator && c.creator._id.toString() === userId.toString();
@@ -35,9 +42,10 @@ router.get('/', authenticate, async (req, res) => {
         id: c._id,
         isGroup: false,
         other_user: isCreator ? c.participant : c.creator,
-        last_updated: c.lastUpdated
+        last_updated: c.lastUpdated,
+        unreadCount
       };
-    });
+    }));
     
     res.json(formatted);
   } catch (err) {
