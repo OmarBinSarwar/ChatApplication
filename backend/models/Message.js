@@ -51,7 +51,9 @@ messageSchema.set('toJSON', {
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
-    delete ret._id;
+    const idStr = doc._id ? doc._id.toString() : (ret._id ? ret._id.toString() : ret.id);
+    ret.id = idStr;
+    ret._id = idStr;
     // Map existing SQLite keys to MongoDB outputs to avoid changing frontend completely
     ret.sender_id = ret.sender;
     ret.receiver_id = ret.receiver;

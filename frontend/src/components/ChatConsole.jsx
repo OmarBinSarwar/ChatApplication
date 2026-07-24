@@ -15,10 +15,22 @@ import {
   Phone,
   Heart,
   ThumbsUp,
+  Pencil,
+  Trash2,
+  Check,
+  AlertCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
+
+const isSameId = (a, b) => {
+  if (!a || !b) return false;
+  const idA = typeof a === 'object' ? (a.id || a._id) : a;
+  const idB = typeof b === 'object' ? (b.id || b._id) : b;
+  if (!idA || !idB) return false;
+  return String(idA) === String(idB);
+};
 
 export default function ChatConsole({ user, onLogout }) {
   const [conversations, setConversations] = useState([]);
@@ -28,6 +40,8 @@ export default function ChatConsole({ user, onLogout }) {
   const [newMessage, setNewMessage] = useState("");
   const [file, setFile] = useState(null);
   const [typingUser, setTypingUser] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null); // { id, text }
+  const [errorMessage, setErrorMessage] = useState(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -126,7 +140,7 @@ export default function ChatConsole({ user, onLogout }) {
           msg.conversation_id === activeConversationRef.current.id
         ) {
           // Prevent duplicate messages if already appended locally
-          if (prev.some((m) => m._id === msg._id || m.id === msg.id)) {
+          if (prev.some((m) => isSameId(m, msg))) {
             return prev;
           }
           return [...prev, msg];
@@ -148,7 +162,19 @@ export default function ChatConsole({ user, onLogout }) {
 
     socketRef.current.on("message_liked", (updatedMsg) => {
       setMessages(prev => prev.map(m =>
-        (m.id === updatedMsg.id || m._id === updatedMsg._id) ? { ...m, like_count: updatedMsg.like_count, liked_by: updatedMsg.liked_by } : m
+        isSameId(m, updatedMsg) ? { ...m, like_count: updatedMsg.like_count, liked_by: updatedMsg.liked_by } : m
+      ));
+    });
+
+    socketRef.current.on("message_edited", (updatedMsg) => {
+      setMessages(prev => prev.map(m =>
+        isSameId(m, updatedMsg) ? updatedMsg : m
+      ));
+    });
+
+    socketRef.current.on("message_deleted", (updatedMsg) => {
+      setMessages(prev => prev.map(m =>
+        isSameId(m, updatedMsg) ? updatedMsg : m
       ));
     });
 
@@ -349,9 +375,10 @@ export default function ChatConsole({ user, onLogout }) {
 
   const handleLike = async (msg) => {
     try {
-      const updated = await fetchApi(`/api/messages/${msg.id}/like`, { method: "POST" });
+      const msgId = msg.id || msg._id;
+      const updated = await fetchApi(`/api/messages/${msgId}/like`, { method: "POST" });
       setMessages(prev => prev.map(m =>
-        m.id === msg.id ? { ...m, like_count: updated.like_count, liked_by: updated.liked_by } : m
+        isSameId(m, msgId) ? { ...m, like_count: updated.like_count, liked_by: updated.liked_by } : m
       ));
       // broadcast to others in conversation
       socketRef.current.emit("message_liked", {
@@ -376,8 +403,83 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
+  const handleStartEdit = (msg) => {
+    if (msg.is_deleted || msg.isDeleted) return;
+    const msgId = msg.id || msg._id;
+    if (!msgId) return;
+    setEditingMessage({ id: msgId, text: msg.text || "" });
+    setNewMessage(msg.text || "");
+    setErrorMessage(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessage(null);
+    setNewMessage("");
+    setErrorMessage(null);
+  };
+
+  const handleDeleteMessage = async (msg) => {
+    const msgId = msg.id || msg._id;
+    if (!msgId) return;
+    if (!window.confirm("Are you sure you want to delete this message?")) return;
+
+    try {
+      const updated = await fetchApi(`/api/messages/${msgId}`, {
+        method: "DELETE",
+      });
+
+      setMessages((prev) =>
+        prev.map((m) => (isSameId(m, msgId) ? updated : m))
+      );
+
+      socketRef.current.emit("message_deleted", {
+        conversationId: activeConversationRef.current?.id,
+        updatedMessage: updated,
+      });
+
+      if (editingMessage && isSameId(editingMessage.id, msgId)) {
+        handleCancelEdit();
+      }
+    } catch (err) {
+      console.error("Failed to delete message", err);
+      setErrorMessage(err.message || "Failed to delete message");
+      setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
+
+    if (editingMessage) {
+      if (!newMessage.trim()) return;
+      try {
+        const updated = await fetchApi(`/api/messages/${editingMessage.id}`, {
+          method: "PUT",
+          body: { text: newMessage.trim() },
+        });
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            isSameId(m, editingMessage.id) ? updated : m
+          )
+        );
+
+        socketRef.current.emit("message_edited", {
+          conversationId: activeConversationRef.current?.id,
+          updatedMessage: updated,
+        });
+
+        setEditingMessage(null);
+        setNewMessage("");
+        setErrorMessage(null);
+      } catch (err) {
+        console.error("Failed to edit message", err);
+        setErrorMessage(err.message || "Failed to edit message");
+        setTimeout(() => setErrorMessage(null), 4000);
+      }
+      return;
+    }
+
     if (!newMessage.trim() && !file) return;
 
     try {
@@ -1081,14 +1183,18 @@ export default function ChatConsole({ user, onLogout }) {
           <div className="messages-container">
             {messages.map((m) => {
               const isSent = m.sender_id === user.id;
+              const isDeleted = m.is_deleted || m.isDeleted;
+              const isEdited = (m.edited_at || m.editedAt) && !isDeleted;
+
               let senderName = "User";
               if (!isSent && activeConversation.isGroup) {
                 const participant = activeConversation.participants?.find(p => p.id === m.sender_id || p._id === m.sender_id);
                 if (participant) senderName = participant.name;
               }
+
               return (
                 <div
-                  key={m.id}
+                  key={m.id || m._id}
                   className={`message-wrapper ${isSent ? "sent" : "received"}`}
                 >
                   {!isSent && activeConversation.isGroup && (
@@ -1096,43 +1202,77 @@ export default function ChatConsole({ user, onLogout }) {
                       {senderName}
                     </span>
                   )}
-                  {m.text && (
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: "4px" }}>
-                      <div className="message-bubble">{m.text}</div>
-                      <button
-                        onClick={() => handleLike(m)}
-                        title="Like"
-                        style={{
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: "2px 4px",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "2px",
-                          color: m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "rgba(255,255,255,0.3)",
-                          fontSize: "0.72rem",
-                          flexShrink: 0,
-                          transition: "color 0.2s",
-                        }}
-                      >
-                        <Heart size={13} fill={m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "none"} />
-                        {m.like_count > 0 && <span>{m.like_count}</span>}
-                      </button>
+                  {isDeleted ? (
+                    <div className="message-bubble" style={{ opacity: 0.7 }}>
+                      <div className="message-deleted">
+                        <Trash2 size={14} />
+                        <span>This message was deleted</span>
+                      </div>
                     </div>
-                  )}
-                  {m.attachment && (
-                    <img
-                      src={`${BASE_URL}${m.attachment}`}
-                      className="message-attachment"
-                      alt="attachment"
-                    />
+                  ) : (
+                    <>
+                      {m.text && (
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: "6px" }}>
+                          {isSent && (
+                            <div className="message-actions-trigger" style={{ flexShrink: 0 }}>
+                              <button
+                                onClick={() => handleStartEdit(m)}
+                                className="message-action-btn"
+                                title="Edit message"
+                                type="button"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteMessage(m)}
+                                className="message-action-btn delete-btn"
+                                title="Delete message"
+                                type="button"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="message-bubble">{m.text}</div>
+
+                          <button
+                            onClick={() => handleLike(m)}
+                            title="Like"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              padding: "2px 4px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "2px",
+                              color: m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "rgba(255,255,255,0.3)",
+                              fontSize: "0.72rem",
+                              flexShrink: 0,
+                              transition: "color 0.2s",
+                            }}
+                          >
+                            <Heart size={13} fill={m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "none"} />
+                            {m.like_count > 0 && <span>{m.like_count}</span>}
+                          </button>
+                        </div>
+                      )}
+                      {m.attachment && (
+                        <img
+                          src={`${BASE_URL}${m.attachment}`}
+                          className="message-attachment"
+                          alt="attachment"
+                        />
+                      )}
+                    </>
                   )}
                   <span className="message-time">
-                    {new Date(m.date_time).toLocaleTimeString([], {
+                    {new Date(m.date_time || m.createdAt).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
+                    {isEdited && <span className="edited-tag">(edited)</span>}
                   </span>
                 </div>
               );
@@ -1141,26 +1281,61 @@ export default function ChatConsole({ user, onLogout }) {
             <div ref={messagesEndRef} />
           </div>
 
+          {errorMessage && (
+            <div className="error-banner">
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <AlertCircle size={16} />
+                <span>{errorMessage}</span>
+              </div>
+              <button className="edit-banner-cancel" onClick={() => setErrorMessage(null)}>
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          {editingMessage && (
+            <div className="edit-banner">
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Pencil size={15} style={{ color: "var(--accent-purple)" }} />
+                <span>Editing message</span>
+              </div>
+              <button className="edit-banner-cancel" onClick={handleCancelEdit} title="Cancel editing">
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           <form className="chat-input-container" onSubmit={handleSendMessage}>
-            <label className="file-input-label" title="Attach image">
-              <Image size={20} />
-              <input
-                type="file"
-                style={{ display: "none" }}
-                accept="image/*"
-                onChange={(e) => setFile(e.target.files[0])}
-              />
-              {file && <span className="file-badge">1</span>}
-            </label>
+            {!editingMessage && (
+              <label className="file-input-label" title="Attach image">
+                <Image size={20} />
+                <input
+                  type="file"
+                  style={{ display: "none" }}
+                  accept="image/*"
+                  onChange={(e) => setFile(e.target.files[0])}
+                />
+                {file && <span className="file-badge">1</span>}
+              </label>
+            )}
             <input
               type="text"
               className="chat-input"
-              placeholder="Message..."
+              placeholder={editingMessage ? "Edit message..." : "Message..."}
               value={newMessage}
               onChange={handleTyping}
               maxLength="500"
             />
-            {newMessage.trim() || file ? (
+            {editingMessage ? (
+              <button
+                type="submit"
+                className="send-btn"
+                title="Save edit"
+                style={{ background: "var(--accent-purple)" }}
+              >
+                <Check size={18} />
+              </button>
+            ) : newMessage.trim() || file ? (
               <button
                 type="submit"
                 className="send-btn"

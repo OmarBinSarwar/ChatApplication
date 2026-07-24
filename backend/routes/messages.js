@@ -171,7 +171,11 @@ router.delete('/:messageId', authenticate, async (req, res) => {
     message.attachment = null;
     await message.save();
 
-    const updated = await Message.findById(messageId);
+    const updated = await Message.findById(messageId).populate({
+      path: 'replyTo',
+      select: 'text sender attachment isDeleted',
+      populate: { path: 'sender', select: 'name' }
+    });
     res.json(updated);
   } catch (err) {
     console.error(err);
