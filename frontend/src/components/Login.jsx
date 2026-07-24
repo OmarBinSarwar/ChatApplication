@@ -5,7 +5,7 @@ import { MessageSquare, Eye, EyeOff } from 'lucide-react';
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
-  const [formData, setFormData] = useState({ name: '', email: '', password: '' });
+  const [formData, setFormData] = useState({ name: '', email: '', password: '', gender: '' });
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,6 +22,7 @@ export default function Login({ onLogin }) {
         payload.append('name', formData.name);
         payload.append('email', formData.email);
         payload.append('password', formData.password);
+        payload.append('gender', formData.gender);
         if (file) payload.append('avatar', file);
 
         const user = await fetchApi('/api/auth/register', {
@@ -103,6 +104,20 @@ export default function Login({ onLogin }) {
               </div>
             </div>
             {isRegister && (
+              <>
+              <div className="form-group">
+                <label>Gender</label>
+                <select
+                  className="form-control"
+                  required
+                  value={formData.gender}
+                  onChange={(e) => setFormData({...formData, gender: e.target.value})}
+                >
+                  <option value="" disabled>Select Gender</option>
+                  <option value="boy">Boy</option>
+                  <option value="girl">Girl</option>
+                </select>
+              </div>
               <div className="form-group">
                 <label>Avatar (Optional)</label>
                 <input 
@@ -112,6 +127,7 @@ export default function Login({ onLogin }) {
                   onChange={(e) => setFile(e.target.files[0])} 
                 />
               </div>
+              </>
             )}
             <button type="submit" className="btn" disabled={loading}>
               {loading ? 'Processing...' : (isRegister ? 'Sign Up' : 'Log In')}

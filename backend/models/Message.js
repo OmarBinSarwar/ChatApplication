@@ -31,7 +31,20 @@ const messageSchema = new mongoose.Schema({
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }]
+  }],
+  isDeleted: {
+    type: Boolean,
+    default: false,
+  },
+  editedAt: {
+    type: Date,
+    default: null,
+  },
+  replyTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message',
+    default: null,
+  }
 }, { timestamps: true });
 
 messageSchema.set('toJSON', {
@@ -46,6 +59,9 @@ messageSchema.set('toJSON', {
     ret.date_time = ret.createdAt;
     ret.like_count = ret.likes ? ret.likes.length : 0;
     ret.liked_by = ret.likes ? ret.likes.map(id => id.toString()) : [];
+    ret.is_deleted = ret.isDeleted;
+    ret.edited_at = ret.editedAt;
+    ret.reply_to = ret.replyTo;
   }
 });
 
