@@ -19,10 +19,40 @@ import {
   Trash2,
   Check,
   AlertCircle,
+  Smile,
+  Search,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
+
+const EMOJI_CATEGORIES = [
+  {
+    name: "Smileys",
+    icon: "😊",
+    emojis: ["😀", "😃", "😄", "😁", "😆", "🥹", "😅", "😂", "🤣", "🥲", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🫡", "🤔", "🫣", "🫢", "🤫", "🤥", "😶", "😐", "😑", "😬", "🫠", "🫥"]
+  },
+  {
+    name: "Gestures",
+    icon: "👍",
+    emojis: ["👍", "👎", "👌", "🤌", "🤏", "✌️", "🤞", "🫰", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "🫵", "🖐️", "✋", "🖖", "👋", "👏", "🙌", "🫶", "👐", "🤲", "🤝", "🙏", "💪", "🦾", "🧠", "🫀", "🫁"]
+  },
+  {
+    name: "Hearts & Fire",
+    icon: "❤️",
+    emojis: ["❤️", "🩷", "🧡", "💛", "💚", "💙", "🩵", "💜", "🤎", "🖤", "🩶", "🤍", "💔", "❤️‍🔥", "❤️‍🩹", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💯", "🔥", "✨", "🌟", "⭐", "💥", "🎉", "🎊", "⚡", "💫"]
+  },
+  {
+    name: "Animals",
+    icon: "🐶",
+    emojis: ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐻‍❄️", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🙈", "🙉", "🙊", "🐒", "🐔", "🐧", "🐦", "🐤", "🐣", "🐥", "🦆", "🦅", "🦉", "🦇", "🐺", "🦄", "🐝", "🦋"]
+  },
+  {
+    name: "Food & Drinks",
+    icon: "🍕",
+    emojis: ["🍕", "🍔", "🍟", "🌭", "🍿", "🥓", "🥞", "🧇", "🍳", "🥪", "🥗", "🥣", "🌮", "🌯", "🥐", "🍞", "🥖", "🥨", "🧀", "🍖", "🍗", "🥩", "🍺", "🍻", "🥂", "🍾", "🍷", "🥃", "🍸", "🍹", "🧃", "☕", "🍩", "🎂"]
+  }
+];
 
 const isSameId = (a, b) => {
   if (!a || !b) return false;
@@ -42,6 +72,10 @@ export default function ChatConsole({ user, onLogout }) {
   const [typingUser, setTypingUser] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null); // { id, text }
   const [errorMessage, setErrorMessage] = useState(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [activeEmojiCat, setActiveEmojiCat] = useState(0);
+  const emojiPickerRef = useRef(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -99,6 +133,14 @@ export default function ChatConsole({ user, onLogout }) {
       }, 300);
     };
 
+    const handleClickOutside = (e) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+
     if (window.visualViewport) {
       window.visualViewport.addEventListener(
         "resize",
@@ -121,6 +163,7 @@ export default function ChatConsole({ user, onLogout }) {
       inputElements.forEach((input) => {
         input.removeEventListener("focus", handleFocus);
       });
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
 
@@ -1318,6 +1361,64 @@ export default function ChatConsole({ user, onLogout }) {
                 {file && <span className="file-badge">1</span>}
               </label>
             )}
+
+            <div className="emoji-picker-container" ref={emojiPickerRef}>
+              <button
+                type="button"
+                className="emoji-btn"
+                title="Choose emoji"
+                onClick={() => setShowEmojiPicker((prev) => !prev)}
+              >
+                <Smile size={20} />
+              </button>
+
+              {showEmojiPicker && (
+                <div className="emoji-picker-popover glass">
+                  <div className="emoji-search-bar">
+                    <Search size={14} />
+                    <input
+                      type="text"
+                      placeholder="Search emoji..."
+                      value={emojiSearch}
+                      onChange={(e) => setEmojiSearch(e.target.value)}
+                    />
+                  </div>
+
+                  {!emojiSearch && (
+                    <div className="emoji-categories">
+                      {EMOJI_CATEGORIES.map((cat, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={`emoji-cat-btn ${activeEmojiCat === idx ? "active" : ""}`}
+                          onClick={() => setActiveEmojiCat(idx)}
+                          title={cat.name}
+                        >
+                          {cat.icon}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="emoji-grid">
+                    {(emojiSearch.trim()
+                      ? EMOJI_CATEGORIES.flatMap((c) => c.emojis)
+                      : EMOJI_CATEGORIES[activeEmojiCat].emojis
+                    ).map((emoji, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        className="emoji-item"
+                        onClick={() => setNewMessage((prev) => prev + emoji)}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <input
               type="text"
               className="chat-input"

@@ -570,6 +570,132 @@ select.form-control option {
   animation: fadeIn 0.2s ease;
 }
 
+/* Emoji Picker Popup */
+.emoji-picker-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.emoji-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.emoji-btn:hover {
+  color: var(--accent-purple);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.emoji-picker-popover {
+  position: absolute;
+  bottom: 55px;
+  left: 0;
+  width: 310px;
+  height: 320px;
+  background: rgba(18, 18, 28, 0.96);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem;
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.emoji-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  padding: 0.4rem 0.75rem;
+  border-radius: 12px;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.emoji-search-bar input {
+  background: none;
+  border: none;
+  outline: none;
+  color: white;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.emoji-categories {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.5rem;
+  overflow-x: auto;
+}
+
+.emoji-cat-btn {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  opacity: 0.6;
+}
+
+.emoji-cat-btn:hover,
+.emoji-cat-btn.active {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.35rem;
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 0.25rem;
+}
+
+.emoji-grid::-webkit-scrollbar {
+  width: 5px;
+}
+
+.emoji-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.emoji-item {
+  background: none;
+  border: none;
+  font-size: 1.35rem;
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.emoji-item:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.2);
+}
+
 .chat-input-container {
   padding: 1rem 1.5rem;
   border-top: 1px solid var(--panel-border);
