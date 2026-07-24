@@ -10,9 +10,14 @@ cloudinary.config({
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: {
-    folder: 'chat_app_uploads',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip'],
+  params: async (req, file) => {
+    let folder = 'chat_app_uploads';
+    let resource_type = 'auto';
+    return {
+      folder: folder,
+      resource_type: resource_type,
+      allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip', 'mp3', 'wav', 'webm', 'ogg', 'm4a', 'aac', 'mp4'],
+    };
   },
 });
 

@@ -44,6 +44,10 @@ const messageSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Message',
     default: null,
+  },
+  audioDuration: {
+    type: Number,
+    default: null,
   }
 }, { timestamps: true });
 
@@ -64,6 +68,7 @@ messageSchema.set('toJSON', {
     ret.is_deleted = ret.isDeleted;
     ret.edited_at = ret.editedAt;
     ret.reply_to = ret.replyTo;
+    ret.audio_duration = ret.audioDuration;
   }
 });
 

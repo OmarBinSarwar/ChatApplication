@@ -27,7 +27,7 @@ router.get('/:conversationId', authenticate, async (req, res) => {
 router.post('/:conversationId', authenticate, upload.single('attachment'), async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { text, receiverId, replyToId } = req.body;
+    const { text, receiverId, replyToId, audioDuration } = req.body;
     const senderId = req.user.id;
     
     let finalReceiverId = receiverId;
@@ -50,7 +50,8 @@ router.post('/:conversationId', authenticate, upload.single('attachment'), async
       receiver: finalReceiverId || null,
       conversationId,
       readBy: [senderId],
-      replyTo: replyToId || null
+      replyTo: replyToId || null,
+      audioDuration: audioDuration ? parseFloat(audioDuration) : null
     });
 
     // Populate replyTo before sending response

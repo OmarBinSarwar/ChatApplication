@@ -21,6 +21,8 @@ import {
   AlertCircle,
   Smile,
   Search,
+  Play,
+  Pause,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -53,6 +55,131 @@ const EMOJI_CATEGORIES = [
     emojis: ["🍕", "🍔", "🍟", "🌭", "🍿", "🥓", "🥞", "🧇", "🍳", "🥪", "🥗", "🥣", "🌮", "🌯", "🥐", "🍞", "🥖", "🥨", "🧀", "🍖", "🍗", "🥩", "🍺", "🍻", "🥂", "🍾", "🍷", "🥃", "🍸", "🍹", "🧃", "☕", "🍩", "🎂"]
   }
 ];
+
+const getAttachmentUrl = (url) => {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${BASE_URL}${url}`;
+};
+
+const isAudioAttachment = (url) => {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  const audioExtensions = [".mp3", ".wav", ".webm", ".ogg", ".m4a", ".aac", ".flac"];
+  return audioExtensions.some((ext) => lower.includes(ext)) || lower.includes("voice_message") || lower.includes("/video/upload/");
+};
+
+function VoiceMessagePlayer({ src, duration, isSender }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(duration || 0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const audioRef = useRef(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch((err) => console.error("Audio playback error:", err));
+      setIsPlaying(true);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current && (!totalDuration || isNaN(totalDuration))) {
+      setTotalDuration(audioRef.current.duration);
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+  };
+
+  const handleSeek = (e) => {
+    const newTime = parseFloat(e.target.value);
+    setCurrentTime(newTime);
+    if (audioRef.current) {
+      audioRef.current.currentTime = newTime;
+    }
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [1, 1.5, 2];
+    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
+    const nextSpeed = speeds[nextIdx];
+    setPlaybackRate(nextSpeed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextSpeed;
+    }
+  };
+
+  const formatTime = (secs) => {
+    if (!secs || isNaN(secs)) return "0:00";
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  const progressPercent = totalDuration ? (currentTime / totalDuration) * 100 : 0;
+  const barHeights = [45, 65, 30, 85, 50, 90, 45, 70, 100, 60, 40, 80, 55, 95, 35, 75, 50, 85];
+
+  return (
+    <div className={`voice-message-player ${isSender ? "sender" : "receiver"}`}>
+      <audio
+        ref={audioRef}
+        src={src}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={handleEnded}
+        preload="metadata"
+      />
+      <button type="button" className="voice-play-btn" onClick={togglePlay} title={isPlaying ? "Pause" : "Play"}>
+        {isPlaying ? <Pause size={18} /> : <Play size={18} style={{ marginLeft: "2px" }} />}
+      </button>
+
+      <div className="voice-player-body">
+        <div className="voice-wave-container">
+          {barHeights.map((height, idx) => {
+            const barProgress = (idx / barHeights.length) * 100;
+            const isActive = barProgress <= progressPercent;
+            return (
+              <div
+                key={idx}
+                className={`voice-wave-bar ${isActive ? "active" : ""}`}
+                style={{ height: `${height}%` }}
+              />
+            );
+          })}
+        </div>
+        <input
+          type="range"
+          min="0"
+          max={totalDuration || 100}
+          step="0.1"
+          value={currentTime}
+          onChange={handleSeek}
+          className="voice-seek-slider"
+        />
+        <div className="voice-time-row">
+          <span>{formatTime(currentTime)} / {formatTime(totalDuration)}</span>
+        </div>
+      </div>
+
+      <button type="button" className="voice-speed-btn" onClick={cycleSpeed} title="Playback speed">
+        {playbackRate}x
+      </button>
+    </div>
+  );
+}
 
 const isSameId = (a, b) => {
   if (!a || !b) return false;
