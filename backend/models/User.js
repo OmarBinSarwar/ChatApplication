@@ -26,7 +26,24 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['boy', 'girl'],
     default: 'boy',
-  }
+  },
+  statusMessage: {
+    type: String,
+    default: '',
+    maxlength: 120,
+  },
+  preferences: {
+    theme: {
+      type: String,
+      enum: ['dark', 'light', 'midnight', 'ocean'],
+      default: 'dark',
+    },
+    accentColor: {
+      type: String,
+      enum: ['purple', 'blue', 'green', 'rose'],
+      default: 'purple',
+    },
+  },
 }, { timestamps: true });
 
 // Transform output to match existing frontend expectations (using 'id' instead of '_id')

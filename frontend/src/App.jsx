@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Login from './components/Login';
 import ChatConsole from './components/ChatConsole';
 import { fetchApi } from './lib/api';
+import { applyTheme, getUserPreferences } from './lib/theme';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -11,7 +12,11 @@ function App() {
     // Check session on mount
     fetchApi('/api/auth/me')
       .then(data => {
-        if (data.user) setUser(data.user);
+        if (data.user) {
+          setUser(data.user);
+          const prefs = getUserPreferences(data.user);
+          applyTheme(prefs.theme, prefs.accentColor);
+        }
       })
       .catch(() => {
         // Not logged in
@@ -19,10 +24,17 @@ function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleUserUpdate = (updatedUser) => {
+    setUser(updatedUser);
+    const prefs = getUserPreferences(updatedUser);
+    applyTheme(prefs.theme, prefs.accentColor);
+  };
+
   const handleLogout = async () => {
     try {
       await fetchApi('/api/auth/logout', { method: 'POST' });
       setUser(null);
+      applyTheme('dark', 'purple');
     } catch (e) {
       console.error('Logout failed', e);
     }
@@ -35,9 +47,13 @@ function App() {
   return (
     <>
       {user ? (
-        <ChatConsole user={user} onLogout={handleLogout} />
+        <ChatConsole user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />
       ) : (
-        <Login onLogin={setUser} />
+        <Login onLogin={(loggedInUser) => {
+          setUser(loggedInUser);
+          const prefs = getUserPreferences(loggedInUser);
+          applyTheme(prefs.theme, prefs.accentColor);
+        }} />
       )}
     </>
   );

@@ -23,10 +23,12 @@ import {
   Search,
   Play,
   Pause,
+  Settings,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
+import ProfileSettings from "./ProfileSettings";
 
 const EMOJI_CATEGORIES = [
   {
@@ -189,7 +191,7 @@ const isSameId = (a, b) => {
   return String(idA) === String(idB);
 };
 
-export default function ChatConsole({ user, onLogout }) {
+export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [conversations, setConversations] = useState([]);
   const [users, setUsers] = useState([]); // All users to start chat with
   const [activeConversation, setActiveConversation] = useState(null);
@@ -208,6 +210,7 @@ export default function ChatConsole({ user, onLogout }) {
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState(null);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
 
   // Group creation state
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -1061,14 +1064,27 @@ export default function ChatConsole({ user, onLogout }) {
                 : "https://ui-avatars.com/api/?name=" + user.name
             }
             alt="avatar"
-            className="avatar"
+            className="avatar sidebar-avatar-clickable"
+            onClick={() => setShowProfileSettings(true)}
+            title="Edit profile"
           />
-          <div style={{ flex: 1 }}>
+          <div
+            style={{ flex: 1, cursor: "pointer" }}
+            onClick={() => setShowProfileSettings(true)}
+            title="Edit profile"
+          >
             <h3 style={{ fontSize: "1rem", margin: 0 }}>{user.name}</h3>
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-              Online
+              {user.statusMessage || "Online"}
             </span>
           </div>
+          <button
+            className="close-sidebar-btn profile-settings-btn"
+            onClick={() => setShowProfileSettings(true)}
+            title="Profile settings"
+          >
+            <Settings size={18} />
+          </button>
           <button
             className="close-sidebar-btn desktop-only"
             onClick={() => setSidebarOpen(false)}
@@ -1704,6 +1720,15 @@ export default function ChatConsole({ user, onLogout }) {
             onClick={(e) => e.stopPropagation()}
           />
         </div>
+      )}
+      {showProfileSettings && (
+        <ProfileSettings
+          user={user}
+          onClose={() => setShowProfileSettings(false)}
+          onUserUpdate={(updatedUser) => {
+            onUserUpdate(updatedUser);
+          }}
+        />
       )}
     </div>
   );
