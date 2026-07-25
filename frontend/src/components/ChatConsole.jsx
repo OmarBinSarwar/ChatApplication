@@ -196,6 +196,7 @@ export default function ChatConsole({ user, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [file, setFile] = useState(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   const [typingUser, setTypingUser] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null); // { id, text }
   const [errorMessage, setErrorMessage] = useState(null);
@@ -203,8 +204,10 @@ export default function ChatConsole({ user, onLogout }) {
   const [emojiSearch, setEmojiSearch] = useState("");
   const [activeEmojiCat, setActiveEmojiCat] = useState(0);
   const emojiPickerRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [showUsersPanel, setShowUsersPanel] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState(null);
 
   // Group creation state
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -293,6 +296,22 @@ export default function ChatConsole({ user, onLogout }) {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!lightboxImage) return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setLightboxImage(null);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [lightboxImage]);
 
   useEffect(() => {
     // Connect to socket
@@ -617,6 +636,28 @@ export default function ChatConsole({ user, onLogout }) {
     }
   };
 
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl(null);
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setFilePreviewUrl(previewUrl);
+
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [file]);
+
+  const handleFileSelect = (e) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) setFile(selectedFile);
+  };
+
+  const handleRemoveFile = () => {
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
 
@@ -679,6 +720,7 @@ export default function ChatConsole({ user, onLogout }) {
       });
       setNewMessage("");
       setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       fetchConversations();
     } catch (e) {
       console.error(e);
@@ -1015,7 +1057,7 @@ export default function ChatConsole({ user, onLogout }) {
           <img
             src={
               user.avatar
-                ? `${BASE_URL}${user.avatar}`
+                ? getAttachmentUrl(user.avatar)
                 : "https://ui-avatars.com/api/?name=" + user.name
             }
             alt="avatar"
@@ -1131,7 +1173,7 @@ export default function ChatConsole({ user, onLogout }) {
                 <img
                   src={
                     u.avatar
-                      ? `${BASE_URL}${u.avatar}`
+                      ? getAttachmentUrl(u.avatar)
                       : "https://ui-avatars.com/api/?name=" + u.name
                   }
                   className="avatar"
@@ -1170,7 +1212,7 @@ export default function ChatConsole({ user, onLogout }) {
             ) : (
               conversations.map((c) => {
                 const name = c.isGroup ? c.groupName : c.other_user.name;
-                const avatarUrl = !c.isGroup && c.other_user.avatar ? `${BASE_URL}${c.other_user.avatar}` : null;
+                const avatarUrl = !c.isGroup && c.other_user.avatar ? getAttachmentUrl(c.other_user.avatar) : null;
                 return (
                   <div
                     key={c.id}
@@ -1226,7 +1268,7 @@ export default function ChatConsole({ user, onLogout }) {
           <div className="chat-header">
             {(!activeConversation.isGroup && activeConversation.other_user.avatar) ? (
               <img
-                src={`${BASE_URL}${activeConversation.other_user.avatar}`}
+                src={getAttachmentUrl(activeConversation.other_user.avatar)}
                 className="avatar"
                 alt=""
               />
@@ -1429,11 +1471,20 @@ export default function ChatConsole({ user, onLogout }) {
                         </div>
                       )}
                       {m.attachment && (
-                        <img
-                          src={`${BASE_URL}${m.attachment}`}
-                          className="message-attachment"
-                          alt="attachment"
-                        />
+                        isAudioAttachment(m.attachment) ? (
+                          <VoiceMessagePlayer
+                            src={getAttachmentUrl(m.attachment)}
+                            duration={m.audio_duration || m.audioDuration}
+                            isSender={isSent}
+                          />
+                        ) : (
+                          <img
+                            src={getAttachmentUrl(m.attachment)}
+                            className="message-attachment"
+                            alt="Shared image"
+                            onClick={() => setLightboxImage(getAttachmentUrl(m.attachment))}
+                          />
+                        )
                       )}
                     </>
                   )}
@@ -1476,16 +1527,33 @@ export default function ChatConsole({ user, onLogout }) {
           )}
 
           <form className="chat-input-container" onSubmit={handleSendMessage}>
+            {file && filePreviewUrl && !editingMessage && (
+              <div className="attachment-preview">
+                <div className="attachment-preview-item">
+                  <img src={filePreviewUrl} alt="Attached image preview" />
+                  <button
+                    type="button"
+                    className="attachment-preview-remove"
+                    onClick={handleRemoveFile}
+                    title="Remove image"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="chat-input-row">
             {!editingMessage && (
               <label className="file-input-label" title="Attach image">
                 <Image size={20} />
                 <input
+                  ref={fileInputRef}
                   type="file"
                   style={{ display: "none" }}
                   accept="image/*"
-                  onChange={(e) => setFile(e.target.files[0])}
+                  onChange={handleFileSelect}
                 />
-                {file && <span className="file-badge">1</span>}
               </label>
             )}
 
@@ -1582,6 +1650,7 @@ export default function ChatConsole({ user, onLogout }) {
                 <ThumbsUp size={18} />
               </button>
             )}
+            </div>
           </form>
         </div>
       ) : (
@@ -1610,6 +1679,30 @@ export default function ChatConsole({ user, onLogout }) {
           <div className="empty-state-footer">
             <p>&copy; {new Date().getFullYear()} OBS ChatApp &bull; Designed & Developed by Omar Bin Sarwar</p>
           </div>
+        </div>
+      )}
+      {lightboxImage && (
+        <div
+          className="image-lightbox"
+          onClick={() => setLightboxImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+        >
+          <button
+            type="button"
+            className="image-lightbox-close"
+            onClick={() => setLightboxImage(null)}
+            title="Close"
+          >
+            <X size={22} />
+          </button>
+          <img
+            src={lightboxImage}
+            alt="Full size preview"
+            className="image-lightbox-content"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
