@@ -318,6 +318,33 @@ select.form-control option {
   flex-shrink: 0;
 }
 
+.avatar-badge-wrapper {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-badge-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid #1e293b;
+}
+
+.status-badge-dot.online {
+  background-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.status-badge-dot.offline {
+  background-color: #9ca3af;
+}
+
 .conversations-list {
   flex: 1;
   overflow-y: auto;

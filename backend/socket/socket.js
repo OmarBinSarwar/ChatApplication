@@ -1,4 +1,5 @@
 const socketIo = require("socket.io");
+const User = require("../models/User");
 
 const userSockets = new Map(); // Map user.id to socket.id
 const callRooms = new Map(); // Map roomId to Map of participants
@@ -15,9 +16,22 @@ const setupSocket = (server) => {
     console.log("User connected:", socket.id);
 
     // User registers their socket ID on login/connect
-    socket.on("register", (userId) => {
-      userSockets.set(userId, socket.id);
-      io.emit("user_online", userId);
+    socket.on("register", async (userId) => {
+      if (!userId) return;
+      const strUserId = userId.toString();
+      userSockets.set(strUserId, socket.id);
+
+      try {
+        await User.findByIdAndUpdate(strUserId, { isOnline: true });
+      } catch (err) {
+        console.error("Error updating user online status:", err);
+      }
+
+      // Send currently online user IDs to newly connected client
+      socket.emit("get_online_users", Array.from(userSockets.keys()));
+
+      // Broadcast online status to all connected users
+      io.emit("user_online", strUserId);
     });
 
     socket.on("join_conversation", (conversationId) => {
@@ -246,7 +260,11 @@ const setupSocket = (server) => {
       for (const [userId, socketId] of userSockets.entries()) {
         if (socketId === socket.id) {
           userSockets.delete(userId);
-          io.emit("user_offline", userId);
+          const lastSeen = new Date();
+          User.findByIdAndUpdate(userId, { isOnline: false, lastSeen }).catch(err =>
+            console.error("Error updating lastSeen on disconnect:", err)
+          );
+          io.emit("user_offline", { userId, lastSeen });
           break;
         }
       }

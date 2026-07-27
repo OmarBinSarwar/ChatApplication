@@ -191,6 +191,38 @@ const isSameId = (a, b) => {
   return String(idA) === String(idB);
 };
 
+const formatLastSeen = (isOnline, lastSeenInput) => {
+  if (isOnline) return "Online";
+  if (!lastSeenInput) return "Offline";
+
+  const date = new Date(lastSeenInput);
+  if (isNaN(date.getTime())) return "Offline";
+
+  const now = new Date();
+  const diffMs = Math.max(0, now - date);
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+
+  if (diffSecs < 60) return "Last seen just now";
+  if (diffMins < 60) return `Last seen ${diffMins}m ago`;
+  if (diffHours < 24 && now.getDate() === date.getDate()) {
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `Last seen Today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (yesterday.getDate() === date.getDate() && yesterday.getMonth() === date.getMonth()) {
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `Last seen Yesterday at ${timeStr}`;
+  }
+
+  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `Last seen ${dateStr} at ${timeStr}`;
+};
+
 export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [conversations, setConversations] = useState([]);
   const [users, setUsers] = useState([]); // All users to start chat with
@@ -211,6 +243,8 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState(null);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
+  const [lastSeenMap, setLastSeenMap] = useState({});
 
   // Group creation state
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -316,6 +350,19 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     };
   }, [lightboxImage]);
 
+  const isUserOnline = (userId, defaultIsOnline = false) => {
+    if (!userId) return false;
+    const idStr = String(userId);
+    if (onlineUserIds.has(idStr)) return true;
+    return defaultIsOnline;
+  };
+
+  const getUserLastSeen = (userId, defaultLastSeen = null) => {
+    if (!userId) return defaultLastSeen;
+    const idStr = String(userId);
+    return lastSeenMap[idStr] || defaultLastSeen;
+  };
+
   useEffect(() => {
     // Connect to socket
     socketRef.current = io(BASE_URL, {
@@ -323,6 +370,31 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     });
 
     socketRef.current.emit("register", user.id);
+
+    socketRef.current.on("get_online_users", (ids) => {
+      if (Array.isArray(ids)) {
+        setOnlineUserIds(new Set(ids.map(String)));
+      }
+    });
+
+    socketRef.current.on("user_online", (uId) => {
+      if (!uId) return;
+      const strId = String(uId);
+      setOnlineUserIds((prev) => new Set([...prev, strId]));
+    });
+
+    socketRef.current.on("user_offline", (data) => {
+      const uId = typeof data === "object" ? data.userId : data;
+      const lastSeen = typeof data === "object" ? data.lastSeen : new Date();
+      if (!uId) return;
+      const strId = String(uId);
+      setOnlineUserIds((prev) => {
+        const next = new Set(prev);
+        next.delete(strId);
+        return next;
+      });
+      setLastSeenMap((prev) => ({ ...prev, [strId]: lastSeen }));
+    });
 
     socketRef.current.on("new_message", (msg) => {
       setMessages((prev) => {
@@ -1177,28 +1249,40 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             >
               Available Users
             </h4>
-            {users.map((u) => (
-              <div
-                key={u.id}
-                className="conversation-item"
-                onClick={() => {
-                  handleStartChat(u.id);
-                  setSidebarOpen(false);
-                }}
-              >
-                <img
-                  src={
-                    u.avatar
-                      ? getAttachmentUrl(u.avatar)
-                      : "https://ui-avatars.com/api/?name=" + u.name
-                  }
-                  className="avatar"
-                  style={{ width: 40, height: 40 }}
-                  alt=""
-                />
-                <span>{u.name}</span>
-              </div>
-            ))}
+            {users.map((u) => {
+              const uId = u.id || u._id;
+              const online = isUserOnline(uId, u.isOnline);
+              return (
+                <div
+                  key={uId}
+                  className="conversation-item"
+                  onClick={() => {
+                    handleStartChat(uId);
+                    setSidebarOpen(false);
+                  }}
+                >
+                  <div className="avatar-badge-wrapper" style={{ marginRight: "0.75rem" }}>
+                    <img
+                      src={
+                        u.avatar
+                          ? getAttachmentUrl(u.avatar)
+                          : "https://ui-avatars.com/api/?name=" + u.name
+                      }
+                      className="avatar"
+                      style={{ width: 40, height: 40 }}
+                      alt=""
+                    />
+                    <span className={`status-badge-dot ${online ? "online" : "offline"}`} />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontWeight: 500 }}>{u.name}</span>
+                    <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                      {formatLastSeen(online, getUserLastSeen(uId, u.lastSeen))}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="conversations-list">
@@ -1227,21 +1311,29 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
               </div>
             ) : (
               conversations.map((c) => {
-                const name = c.isGroup ? c.groupName : c.other_user.name;
-                const avatarUrl = !c.isGroup && c.other_user.avatar ? getAttachmentUrl(c.other_user.avatar) : null;
+                const name = c.isGroup ? c.groupName : c.other_user?.name;
+                const avatarUrl = !c.isGroup && c.other_user?.avatar ? getAttachmentUrl(c.other_user.avatar) : null;
+                const otherUserId = !c.isGroup && c.other_user ? (c.other_user.id || c.other_user._id) : null;
+                const isOnline = !c.isGroup && otherUserId ? isUserOnline(otherUserId, c.other_user.isOnline) : false;
+
                 return (
                   <div
                     key={c.id}
                     className={`conversation-item ${activeConversation?.id === c.id ? "active" : ""}`}
                     onClick={() => handleConversationClick(c)}
                   >
-                    {avatarUrl ? (
-                      <img src={avatarUrl} className="avatar" style={{ width: 40, height: 40 }} alt="" />
-                    ) : (
-                      <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%" }}>
-                        {name.substring(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    <div className="avatar-badge-wrapper" style={{ marginRight: "0.75rem" }}>
+                      {avatarUrl ? (
+                        <img src={avatarUrl} className="avatar" style={{ width: 40, height: 40 }} alt="" />
+                      ) : (
+                        <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%" }}>
+                          {name ? name.substring(0, 2).toUpperCase() : "US"}
+                        </div>
+                      )}
+                      {!c.isGroup && (
+                        <span className={`status-badge-dot ${isOnline ? "online" : "offline"}`} />
+                      )}
+                    </div>
                     <div style={{ flex: 1, overflow: "hidden" }}>
                       <div
                         style={{
@@ -1253,6 +1345,11 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                       >
                         {name}
                       </div>
+                      {!c.isGroup && c.other_user && (
+                        <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                          {formatLastSeen(isOnline, getUserLastSeen(otherUserId, c.other_user.lastSeen))}
+                        </div>
+                      )}
                     </div>
                     {c.unreadCount > 0 && (
                       <div style={{
@@ -1282,23 +1379,32 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       {activeConversation ? (
         <div className="chat-area glass" ref={chatAreaRef}>
           <div className="chat-header">
-            {(!activeConversation.isGroup && activeConversation.other_user.avatar) ? (
-              <img
-                src={getAttachmentUrl(activeConversation.other_user.avatar)}
-                className="avatar"
-                alt=""
-              />
-            ) : (
-              <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%", marginRight: "0.75rem" }}>
-                {(activeConversation.isGroup ? activeConversation.groupName : activeConversation.other_user.name).substring(0, 2).toUpperCase()}
-              </div>
-            )}
+            <div className="avatar-badge-wrapper" style={{ marginRight: "0.75rem" }}>
+              {(!activeConversation.isGroup && activeConversation.other_user?.avatar) ? (
+                <img
+                  src={getAttachmentUrl(activeConversation.other_user.avatar)}
+                  className="avatar"
+                  style={{ width: 40, height: 40 }}
+                  alt=""
+                />
+              ) : (
+                <div className="avatar" style={{ width: 40, height: 40, background: "var(--accent-purple)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1rem", borderRadius: "50%" }}>
+                  {(activeConversation.isGroup ? activeConversation.groupName : (activeConversation.other_user?.name || "User")).substring(0, 2).toUpperCase()}
+                </div>
+              )}
+              {!activeConversation.isGroup && activeConversation.other_user && (
+                <span className={`status-badge-dot ${isUserOnline(activeConversation.other_user.id || activeConversation.other_user._id, activeConversation.other_user.isOnline) ? "online" : "offline"}`} />
+              )}
+            </div>
             <div className="chat-header-info">
-              <h3>{activeConversation.isGroup ? activeConversation.groupName : activeConversation.other_user.name}</h3>
+              <h3>{activeConversation.isGroup ? activeConversation.groupName : activeConversation.other_user?.name}</h3>
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                 {activeConversation.isGroup 
                   ? `${activeConversation.participants?.length || 0} participants` 
-                  : "Active now"
+                  : formatLastSeen(
+                      isUserOnline(activeConversation.other_user?.id || activeConversation.other_user?._id, activeConversation.other_user?.isOnline),
+                      getUserLastSeen(activeConversation.other_user?.id || activeConversation.other_user?._id, activeConversation.other_user?.lastSeen)
+                    )
                 }
               </span>
             </div>

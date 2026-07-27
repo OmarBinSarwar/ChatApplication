@@ -11,9 +11,9 @@ router.get('/', authenticate, async (req, res) => {
     const conversations = await Conversation.find({
       $or: [{ creator: userId }, { participant: userId }, { participants: userId }]
     })
-    .populate('creator', 'name avatar')
-    .populate('participant', 'name avatar')
-    .populate('participants', 'name avatar')
+    .populate('creator', 'name avatar isOnline lastSeen')
+    .populate('participant', 'name avatar isOnline lastSeen')
+    .populate('participants', 'name avatar isOnline lastSeen')
     .sort({ lastUpdated: -1 });
     
     const formatted = await Promise.all(conversations.map(async (c) => {

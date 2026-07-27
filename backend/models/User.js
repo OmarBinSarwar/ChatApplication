@@ -44,6 +44,14 @@ const userSchema = new mongoose.Schema({
       default: 'purple',
     },
   },
+  isOnline: {
+    type: Boolean,
+    default: false,
+  },
+  lastSeen: {
+    type: Date,
+    default: Date.now,
+  },
 }, { timestamps: true });
 
 // Transform output to match existing frontend expectations (using 'id' instead of '_id')
