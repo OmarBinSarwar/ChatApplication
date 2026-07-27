@@ -24,6 +24,9 @@ import {
   Play,
   Pause,
   Settings,
+  Pin,
+  PinOff,
+  CornerUpRight,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -245,6 +248,8 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [onlineUserIds, setOnlineUserIds] = useState(new Set());
   const [lastSeenMap, setLastSeenMap] = useState({});
+  const [forwardingMessage, setForwardingMessage] = useState(null);
+  const [selectedForwardTargetIds, setSelectedForwardTargetIds] = useState([]);
 
   // Group creation state
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -440,6 +445,32 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       setMessages(prev => prev.map(m =>
         isSameId(m, updatedMsg) ? updatedMsg : m
       ));
+    });
+
+    socketRef.current.on("message_pinned", (data) => {
+      const { conversationId, pinnedMessage } = data;
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, pinnedMessage } : c))
+      );
+      setActiveConversation((prev) => {
+        if (prev && prev.id === conversationId) {
+          return { ...prev, pinnedMessage };
+        }
+        return prev;
+      });
+    });
+
+    socketRef.current.on("message_unpinned", (data) => {
+      const { conversationId } = data;
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, pinnedMessage: null } : c))
+      );
+      setActiveConversation((prev) => {
+        if (prev && prev.id === conversationId) {
+          return { ...prev, pinnedMessage: null };
+        }
+        return prev;
+      });
     });
 
     // Mesh Group Calling Sockets
@@ -707,6 +738,106 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     } catch (err) {
       console.error("Failed to delete message", err);
       setErrorMessage(err.message || "Failed to delete message");
+      setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
+
+  const handlePinMessage = async (msg) => {
+    if (!activeConversation) return;
+    const msgId = msg.id || msg._id;
+    if (!msgId) return;
+
+    try {
+      const res = await fetchApi(`/api/conversations/${activeConversation.id}/pin/${msgId}`, {
+        method: "PUT",
+      });
+
+      setActiveConversation((prev) => ({ ...prev, pinnedMessage: res.pinnedMessage }));
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeConversation.id ? { ...c, pinnedMessage: res.pinnedMessage } : c))
+      );
+
+      socketRef.current.emit("message_pinned", {
+        conversationId: activeConversation.id,
+        pinnedMessage: res.pinnedMessage,
+      });
+    } catch (err) {
+      console.error("Failed to pin message", err);
+      setErrorMessage(err.message || "Failed to pin message");
+      setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
+
+  const handleUnpinMessage = async () => {
+    if (!activeConversation) return;
+
+    try {
+      await fetchApi(`/api/conversations/${activeConversation.id}/pin`, {
+        method: "DELETE",
+      });
+
+      setActiveConversation((prev) => ({ ...prev, pinnedMessage: null }));
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeConversation.id ? { ...c, pinnedMessage: null } : c))
+      );
+
+      socketRef.current.emit("message_unpinned", {
+        conversationId: activeConversation.id,
+      });
+    } catch (err) {
+      console.error("Failed to unpin message", err);
+      setErrorMessage(err.message || "Failed to unpin message");
+      setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
+
+  const scrollToPinnedMessage = (msgId) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.transition = "background 0.3s";
+      const origBg = el.style.background;
+      el.style.background = "rgba(167, 139, 250, 0.3)";
+      setTimeout(() => {
+        el.style.background = origBg;
+      }, 2000);
+    }
+  };
+
+  const handleOpenForwardModal = (msg) => {
+    setForwardingMessage(msg);
+    setSelectedForwardTargetIds([]);
+  };
+
+  const handleExecuteForward = async () => {
+    if (!forwardingMessage || selectedForwardTargetIds.length === 0) return;
+    const srcId = forwardingMessage.id || forwardingMessage._id;
+
+    try {
+      const res = await fetchApi("/api/messages/forward", {
+        method: "POST",
+        body: JSON.stringify({
+          sourceMessageId: srcId,
+          targetConversationIds: selectedForwardTargetIds,
+        }),
+      });
+
+      if (res.messages && Array.isArray(res.messages)) {
+        res.messages.forEach((msg) => {
+          socketRef.current.emit("send_message", {
+            msg,
+            notifyUsers: [],
+          });
+        });
+      }
+
+      setForwardingMessage(null);
+      setSelectedForwardTargetIds([]);
+      fetchConversations();
+    } catch (err) {
+      console.error("Failed to forward message", err);
+      setErrorMessage(err.message || "Failed to forward message");
       setTimeout(() => setErrorMessage(null), 4000);
     }
   };
@@ -1450,6 +1581,36 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             </button>
           </div>
 
+          {activeConversation.pinnedMessage && (
+            <div
+              className="pinned-banner"
+              onClick={() => scrollToPinnedMessage(activeConversation.pinnedMessage.id || activeConversation.pinnedMessage._id)}
+            >
+              <Pin size={16} className="pinned-banner-icon" />
+              <div className="pinned-banner-content">
+                <strong>Pinned: </strong>
+                <span>
+                  {activeConversation.pinnedMessage.text
+                    ? activeConversation.pinnedMessage.text
+                    : activeConversation.pinnedMessage.attachment
+                    ? "Attachment"
+                    : "Pinned message"}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="pinned-banner-unpin"
+                title="Unpin message"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleUnpinMessage();
+                }}
+              >
+                <X size={15} />
+              </button>
+            </div>
+          )}
+
           {callState.incoming && callState.incoming.conversationId === activeConversation.id && (
             <div className="call-banner">
               <span>Active call started by {callState.incoming.callerName}</span>
@@ -1528,6 +1689,7 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
 
               return (
                 <div
+                  id={`msg-${m.id || m._id}`}
                   key={m.id || m._id}
                   className={`message-wrapper ${isSent ? "sent" : "received"}`}
                 >
@@ -1535,6 +1697,12 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                     <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block", fontWeight: "600" }}>
                       {senderName}
                     </span>
+                  )}
+                  {(m.is_forwarded || m.isForwarded) && (
+                    <div className="forwarded-tag">
+                      <CornerUpRight size={12} />
+                      <span>Forwarded</span>
+                    </div>
                   )}
                   {isDeleted ? (
                     <div className="message-bubble" style={{ opacity: 0.7 }}>
@@ -1547,26 +1715,44 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                     <>
                       {m.text && (
                         <div style={{ display: "flex", alignItems: "flex-end", gap: "6px" }}>
-                          {isSent && (
-                            <div className="message-actions-trigger" style={{ flexShrink: 0 }}>
-                              <button
-                                onClick={() => handleStartEdit(m)}
-                                className="message-action-btn"
-                                title="Edit message"
-                                type="button"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteMessage(m)}
-                                className="message-action-btn delete-btn"
-                                title="Delete message"
-                                type="button"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          )}
+                          <div className="message-actions-trigger" style={{ flexShrink: 0 }}>
+                            {isSent && (
+                              <>
+                                <button
+                                  onClick={() => handleStartEdit(m)}
+                                  className="message-action-btn"
+                                  title="Edit message"
+                                  type="button"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteMessage(m)}
+                                  className="message-action-btn delete-btn"
+                                  title="Delete message"
+                                  type="button"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
+                            <button
+                              onClick={() => handlePinMessage(m)}
+                              className="message-action-btn"
+                              title="Pin message"
+                              type="button"
+                            >
+                              <Pin size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleOpenForwardModal(m)}
+                              className="message-action-btn"
+                              title="Forward message"
+                              type="button"
+                            >
+                              <CornerUpRight size={13} />
+                            </button>
+                          </div>
 
                           <div className="message-bubble">{m.text}</div>
 
@@ -1835,6 +2021,95 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             onUserUpdate(updatedUser);
           }}
         />
+      )}
+
+      {/* Forward Modal */}
+      {forwardingMessage && (
+        <div className="forward-modal-overlay" onClick={() => setForwardingMessage(null)}>
+          <div className="forward-modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+              <h3 style={{ fontSize: "1.1rem", fontWeight: 600 }}>Forward Message</h3>
+              <button
+                type="button"
+                onClick={() => setForwardingMessage(null)}
+                style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div style={{
+              background: "rgba(255,255,255,0.05)",
+              padding: "0.75rem",
+              borderRadius: "8px",
+              fontSize: "0.85rem",
+              marginBottom: "1rem",
+              color: "var(--text-muted)"
+            }}>
+              "{forwardingMessage.text || (forwardingMessage.attachment ? "Attachment" : "Audio message")}"
+            </div>
+
+            <h4 style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
+              Select Destination Chats
+            </h4>
+
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+              {conversations.map((c) => {
+                const cId = c.id;
+                const isSelected = selectedForwardTargetIds.includes(cId);
+                const name = c.isGroup ? c.groupName : c.other_user?.name || "User";
+                return (
+                  <label
+                    key={cId}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                      padding: "0.6rem 0.8rem",
+                      borderRadius: "8px",
+                      background: isSelected ? "rgba(138,43,226,0.2)" : "rgba(255,255,255,0.03)",
+                      cursor: "pointer",
+                      transition: "background 0.2s"
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedForwardTargetIds((prev) => [...prev, cId]);
+                        } else {
+                          setSelectedForwardTargetIds((prev) => prev.filter((id) => id !== cId));
+                        }
+                      }}
+                    />
+                    <span style={{ fontWeight: 500, fontSize: "0.9rem" }}>{name}</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={selectedForwardTargetIds.length === 0}
+                onClick={handleExecuteForward}
+                style={{ flex: 1 }}
+              >
+                Forward ({selectedForwardTargetIds.length})
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ flex: 1, background: "rgba(255,255,255,0.05)" }}
+                onClick={() => setForwardingMessage(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

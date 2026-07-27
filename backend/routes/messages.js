@@ -184,4 +184,59 @@ router.delete('/:messageId', authenticate, async (req, res) => {
   }
 });
 
+// Forward a message to multiple conversations
+router.post('/forward', authenticate, async (req, res) => {
+  try {
+    const { sourceMessageId, targetConversationIds } = req.body;
+    const senderId = req.user.id;
+
+    if (!sourceMessageId || !targetConversationIds || !Array.isArray(targetConversationIds) || targetConversationIds.length === 0) {
+      return res.status(400).json({ error: 'sourceMessageId and targetConversationIds array are required' });
+    }
+
+    const sourceMessage = await Message.findById(sourceMessageId);
+    if (!sourceMessage || sourceMessage.isDeleted) {
+      return res.status(404).json({ error: 'Source message not found or deleted' });
+    }
+
+    const createdMessages = [];
+
+    for (const convId of targetConversationIds) {
+      const conv = await Conversation.findById(convId);
+      if (!conv) continue;
+
+      let receiverId = null;
+      if (!conv.isGroup) {
+        receiverId = conv.creator.toString() === senderId.toString() ? conv.participant : conv.creator;
+      }
+
+      const newMsg = await Message.create({
+        text: sourceMessage.text || '',
+        attachment: sourceMessage.attachment || null,
+        audioDuration: sourceMessage.audioDuration || null,
+        sender: senderId,
+        receiver: receiverId,
+        conversationId: convId,
+        readBy: [senderId],
+        isForwarded: true
+      });
+
+      await Conversation.findByIdAndUpdate(convId, { lastUpdated: Date.now() });
+
+      const populatedMsg = await Message.findById(newMsg._id).populate({
+        path: 'replyTo',
+        select: 'text sender attachment isDeleted',
+        populate: { path: 'sender', select: 'name' }
+      });
+
+      createdMessages.push(populatedMsg);
+    }
+
+    res.status(201).json({ success: true, messages: createdMessages });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

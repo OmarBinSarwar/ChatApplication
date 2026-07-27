@@ -97,6 +97,16 @@ const setupSocket = (server) => {
       io.to(`conversation_${data.conversationId}`).emit("message_deleted", data.updatedMessage);
     });
 
+    socket.on("message_pinned", (data) => {
+      // data: { conversationId, pinnedMessage }
+      io.to(`conversation_${data.conversationId}`).emit("message_pinned", data);
+    });
+
+    socket.on("message_unpinned", (data) => {
+      // data: { conversationId }
+      io.to(`conversation_${data.conversationId}`).emit("message_unpinned", data);
+    });
+
     socket.on("call_user", (data) => {
       const { toUserId, fromUserId, offer } = data;
       const recipientSocketId = userSockets.get(toUserId);

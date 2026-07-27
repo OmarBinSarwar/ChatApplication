@@ -14,6 +14,10 @@ router.get('/', authenticate, async (req, res) => {
     .populate('creator', 'name avatar isOnline lastSeen')
     .populate('participant', 'name avatar isOnline lastSeen')
     .populate('participants', 'name avatar isOnline lastSeen')
+    .populate({
+      path: 'pinnedMessage',
+      populate: { path: 'sender', select: 'name' }
+    })
     .sort({ lastUpdated: -1 });
     
     const formatted = await Promise.all(conversations.map(async (c) => {
@@ -34,7 +38,8 @@ router.get('/', authenticate, async (req, res) => {
             avatar: ''
           },
           last_updated: c.lastUpdated,
-          unreadCount
+          unreadCount,
+          pinnedMessage: c.pinnedMessage
         };
       }
       const isCreator = c.creator && c.creator._id.toString() === userId.toString();
@@ -43,7 +48,8 @@ router.get('/', authenticate, async (req, res) => {
         isGroup: false,
         other_user: isCreator ? c.participant : c.creator,
         last_updated: c.lastUpdated,
-        unreadCount
+        unreadCount,
+        pinnedMessage: c.pinnedMessage
       };
     }));
     
@@ -115,6 +121,46 @@ router.post('/group', authenticate, async (req, res) => {
       },
       last_updated: populated.lastUpdated
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:conversationId/pin/:messageId', authenticate, async (req, res) => {
+  try {
+    const { conversationId, messageId } = req.params;
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    conversation.pinnedMessage = messageId;
+    await conversation.save();
+
+    const populated = await Conversation.findById(conversationId).populate({
+      path: 'pinnedMessage',
+      populate: { path: 'sender', select: 'name' }
+    });
+
+    res.json({ success: true, pinnedMessage: populated.pinnedMessage });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:conversationId/pin', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+
+    conversation.pinnedMessage = null;
+    await conversation.save();
+
+    res.json({ success: true, pinnedMessage: null });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

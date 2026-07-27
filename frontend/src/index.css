@@ -400,6 +400,94 @@ select.form-control option {
   flex-shrink: 0;
 }
 
+/* Pinned Message Banner */
+.pinned-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.25rem;
+  background: rgba(138, 43, 226, 0.12);
+  border-bottom: 1px solid rgba(138, 43, 226, 0.3);
+  font-size: 0.85rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.pinned-banner:hover {
+  background: rgba(138, 43, 226, 0.2);
+}
+
+.pinned-banner-icon {
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
+.pinned-banner-content {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-banner-unpin {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.pinned-banner-unpin:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* Forwarded Tag */
+.forwarded-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+/* Forward Modal */
+.forward-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.forward-modal {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 16px;
+  padding: 1.5rem;
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
 .back-btn {
   background: none;
   border: none;

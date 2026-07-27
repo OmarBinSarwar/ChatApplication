@@ -48,6 +48,10 @@ const messageSchema = new mongoose.Schema({
   audioDuration: {
     type: Number,
     default: null,
+  },
+  isForwarded: {
+    type: Boolean,
+    default: false,
   }
 }, { timestamps: true });
 
@@ -69,6 +73,7 @@ messageSchema.set('toJSON', {
     ret.edited_at = ret.editedAt;
     ret.reply_to = ret.replyTo;
     ret.audio_duration = ret.audioDuration;
+    ret.is_forwarded = ret.isForwarded;
   }
 });
 
