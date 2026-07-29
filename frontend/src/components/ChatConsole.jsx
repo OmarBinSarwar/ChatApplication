@@ -27,6 +27,8 @@ import {
   Pin,
   PinOff,
   CornerUpRight,
+  FileText,
+  Sparkles,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -250,6 +252,12 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [lastSeenMap, setLastSeenMap] = useState({});
   const [forwardingMessage, setForwardingMessage] = useState(null);
   const [selectedForwardTargetIds, setSelectedForwardTargetIds] = useState([]);
+
+  // AI Summarize state
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [summaryText, setSummaryText] = useState("");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
 
   // Group creation state
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -839,6 +847,24 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       console.error("Failed to forward message", err);
       setErrorMessage(err.message || "Failed to forward message");
       setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!activeConversation) return;
+    setSummaryText("");
+    setSummaryError("");
+    setSummaryLoading(true);
+    setShowSummaryModal(true);
+    try {
+      const res = await fetchApi(`/api/messages/${activeConversation.id}/summarize`, {
+        method: "POST",
+      });
+      setSummaryText(res.summary);
+    } catch (err) {
+      setSummaryError(err.message || "Failed to generate summary. Please try again.");
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
@@ -1579,6 +1605,27 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             >
               <Video size={17} />
             </button>
+            <button
+              title="Summarize Conversation"
+              style={{
+                marginLeft: "0.4rem",
+                background: "linear-gradient(135deg, rgba(167,139,250,0.25), rgba(139,92,246,0.35))",
+                border: "1px solid rgba(167,139,250,0.4)",
+                borderRadius: "50%",
+                width: 36,
+                height: 36,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: "#c4b5fd",
+                transition: "all 0.2s",
+              }}
+              onClick={handleSummarize}
+              type="button"
+            >
+              <Sparkles size={17} />
+            </button>
           </div>
 
           {activeConversation.pinnedMessage && (
@@ -2111,6 +2158,134 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           </div>
         </div>
       )}
+
+      {/* AI Summary Modal */}
+      {showSummaryModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "1rem",
+          }}
+          onClick={() => setShowSummaryModal(false)}
+        >
+          <div
+            style={{
+              background: "linear-gradient(135deg, #1e1b4b 0%, #1a1040 50%, #0f0a2e 100%)",
+              border: "1px solid rgba(167,139,250,0.3)",
+              borderRadius: "20px",
+              padding: "2rem",
+              maxWidth: "520px",
+              width: "100%",
+              boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(167,139,250,0.1)",
+              position: "relative",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: "12px",
+                background: "linear-gradient(135deg, #7c3aed, #a78bfa)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0,
+              }}>
+                <Sparkles size={20} color="white" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", color: "white", fontWeight: 700 }}>
+                  AI Conversation Summary
+                </h3>
+                <p style={{ margin: 0, fontSize: "0.75rem", color: "#a78bfa" }}>
+                  Powered by Gemini AI
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSummaryModal(false)}
+                style={{
+                  marginLeft: "auto", background: "rgba(255,255,255,0.08)",
+                  border: "none", borderRadius: "50%", width: 32, height: 32,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", color: "white", flexShrink: 0,
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(167,139,250,0.15)",
+              borderRadius: "12px",
+              padding: "1.25rem",
+              minHeight: "100px",
+            }}>
+              {summaryLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem", padding: "1rem 0" }}>
+                  <div style={{
+                    width: 40, height: 40, border: "3px solid rgba(167,139,250,0.2)",
+                    borderTopColor: "#a78bfa", borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }} />
+                  <p style={{ color: "#a78bfa", margin: 0, fontSize: "0.9rem" }}>
+                    Generating summary...
+                  </p>
+                </div>
+              ) : summaryError ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#f87171" }}>
+                  <AlertCircle size={18} />
+                  <span style={{ fontSize: "0.9rem" }}>{summaryError}</span>
+                </div>
+              ) : (
+                <p style={{
+                  margin: 0, color: "rgba(255,255,255,0.9)",
+                  lineHeight: 1.75, fontSize: "0.95rem",
+                }}>
+                  {summaryText}
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!summaryLoading && (
+              <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.25rem" }}>
+                {summaryError && (
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ flex: 1 }}
+                    onClick={handleSummarize}
+                  >
+                    Try Again
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ flex: 1, background: "rgba(255,255,255,0.06)" }}
+                  onClick={() => setShowSummaryModal(false)}
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

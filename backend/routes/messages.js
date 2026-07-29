@@ -1,9 +1,13 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { authenticate } = require('./auth');
 const { upload } = require('../config/cloudinary');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const router = express.Router();
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Get messages for a conversation (with replyTo populated)
 router.get('/:conversationId', authenticate, async (req, res) => {
@@ -236,6 +240,72 @@ router.post('/forward', authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// AI Summarize conversation
+router.post('/:conversationId/summarize', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+
+    // Fetch all non-deleted messages in the conversation
+    let queryId;
+    try {
+      queryId = new mongoose.Types.ObjectId(conversationId);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid conversation ID' });
+    }
+
+    const messages = await Message.find({ conversationId: queryId })
+      .populate('sender', 'name')
+      .sort({ createdAt: 1 });
+
+    console.log(`[Summarize] Found ${messages.length} total messages for conversation ${conversationId}`);
+
+    // Filter out deleted messages
+    const activeMessages = messages.filter(m => !m.isDeleted);
+
+    console.log(`[Summarize] ${activeMessages.length} active messages after filter`);
+
+    if (!activeMessages || activeMessages.length === 0) {
+      return res.status(400).json({ error: 'No messages to summarize' });
+    }
+
+    // Format messages — include text and note attachments/audio
+    const formattedLines = activeMessages.map(m => {
+      const senderName = m.sender?.name || 'User';
+      if (m.text && m.text.trim()) {
+        return `${senderName}: ${m.text.trim()}`;
+      } else if (m.audioDuration) {
+        return `${senderName}: [sent a voice message]`;
+      } else if (m.attachment) {
+        return `${senderName}: [sent an image/file]`;
+      }
+      return null;
+    }).filter(Boolean);
+
+    if (formattedLines.length === 0) {
+      return res.status(400).json({ error: 'No summarizable content found in this conversation' });
+    }
+
+    const formattedMessages = formattedLines.join('\n');
+
+    // Call Gemini AI
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const prompt = `You are a helpful assistant. Summarize the following chat conversation concisely in 3-5 sentences. Mention the main topics discussed and any decisions made. Respond in the same language as the conversation.
+
+Conversation:
+${formattedMessages}
+
+Summary:`;
+
+    const result = await model.generateContent(prompt);
+    const summary = result.response.text();
+
+    res.json({ summary, messageCount: activeMessages.length });
+  } catch (err) {
+    console.error('Summarize error:', err);
+    res.status(500).json({ error: 'Failed to generate summary' });
   }
 });
 
