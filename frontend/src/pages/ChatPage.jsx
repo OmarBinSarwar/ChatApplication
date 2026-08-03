@@ -33,7 +33,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
-import ProfileSettings from "./ProfileSettings";
+import ProfileSettings from "../components/ProfileSettings";
 
 const EMOJI_CATEGORIES = [
   {
@@ -1313,6 +1313,14 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             title="Profile settings"
           >
             <Settings size={18} />
+          </button>
+          <button
+            className="close-sidebar-btn"
+            onClick={onLogout}
+            title="Log out"
+            style={{ color: '#ef4444' }}
+          >
+            <LogOut size={18} />
           </button>
           <button
             className="close-sidebar-btn desktop-only"

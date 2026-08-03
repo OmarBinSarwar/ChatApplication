@@ -1,62 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import Login from './components/Login';
-import ChatConsole from './components/ChatConsole';
-import { fetchApi } from './lib/api';
-import { applyTheme, getUserPreferences } from './lib/theme';
+import React from 'react';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
+import LoginPage from './pages/LoginPage';
+import ChatPage from './pages/ChatPage';
+import RootLayout from './layouts/RootLayout';
+import { useAuth } from './lib/authContext';
+
+// Wrapper for ChatPage to supply context props
+const ChatPageWrapper = () => {
+  const { user, handleLogout, handleUserUpdate } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  return <ChatPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
+};
+
+// Wrapper for LoginPage to supply context props
+const LoginPageWrapper = () => {
+  const { user, loginUser } = useAuth();
+  if (user) return <Navigate to="/" replace />;
+  return <LoginPage onLogin={loginUser} />;
+};
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    children: [
+      {
+        index: true,
+        element: <ChatPageWrapper />,
+      },
+      {
+        path: 'login',
+        element: <LoginPageWrapper />,
+      },
+      {
+        path: '*',
+        element: <Navigate to="/" replace />
+      }
+    ]
+  }
+]);
 
 function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check session on mount
-    fetchApi('/api/auth/me')
-      .then(data => {
-        if (data.user) {
-          setUser(data.user);
-          const prefs = getUserPreferences(data.user);
-          applyTheme(prefs.theme, prefs.accentColor);
-        }
-      })
-      .catch(() => {
-        // Not logged in
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleUserUpdate = (updatedUser) => {
-    setUser(updatedUser);
-    const prefs = getUserPreferences(updatedUser);
-    applyTheme(prefs.theme, prefs.accentColor);
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetchApi('/api/auth/logout', { method: 'POST' });
-      setUser(null);
-      applyTheme('dark', 'purple');
-    } catch (e) {
-      console.error('Logout failed', e);
-    }
-  };
-
-  if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: 'white' }}>Loading...</div>;
-  }
-
-  return (
-    <>
-      {user ? (
-        <ChatConsole user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />
-      ) : (
-        <Login onLogin={(loggedInUser) => {
-          setUser(loggedInUser);
-          const prefs = getUserPreferences(loggedInUser);
-          applyTheme(prefs.theme, prefs.accentColor);
-        }} />
-      )}
-    </>
-  );
+  return <RouterProvider router={router} />;
 }
 
 export default App;
