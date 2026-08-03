@@ -106,6 +106,11 @@ export default function ProfileSettings({ user, onClose, onUserUpdate }) {
       if (data.user.avatar) {
         setAvatarPreview(getAvatarUrl(data.user.avatar, data.user.name));
       }
+      
+      // Auto-close after a short delay so user can see success message
+      setTimeout(() => {
+        onClose();
+      }, 1000);
     } catch (err) {
       setError(err.message);
       const prefs = getUserPreferences(user);

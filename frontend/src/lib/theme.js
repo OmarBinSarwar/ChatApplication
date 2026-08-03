@@ -1,11 +1,11 @@
 const THEMES = {
   dark: {
-    "--bg-color": "#101c22",
-    "--panel-bg": "rgba(21, 34, 40, 0.8)",
-    "--panel-border": "#1e343d",
+    "--bg-color": "#1e343d",
+    "--panel-bg": "rgba(45, 77, 84, 0.7)",
+    "--panel-border": "#446b73",
     "--text-main": "#fcf6eb",
-    "--text-muted": "#8e9fa0",
-    "--message-received": "rgba(30, 52, 61, 0.9)",
+    "--text-muted": "#bdd2cc",
+    "--message-received": "rgba(45, 77, 84, 0.9)",
   },
   light: {
     "--bg-color": "hsl(210, 40%, 96%)",
