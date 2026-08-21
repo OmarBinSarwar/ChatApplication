@@ -15,6 +15,7 @@ export default function ProfileSettings({ user, onClose, onUserUpdate }) {
   const [activeTab, setActiveTab] = useState("profile");
   const [formData, setFormData] = useState({
     name: user.name || "",
+    phoneNumber: user.phoneNumber || "",
     gender: user.gender || "boy",
     statusMessage: user.statusMessage || "",
     theme: getUserPreferences(user).theme,
@@ -77,6 +78,7 @@ export default function ProfileSettings({ user, onClose, onUserUpdate }) {
     try {
       const payload = new FormData();
       payload.append("name", formData.name.trim());
+      payload.append("phoneNumber", formData.phoneNumber.trim());
       payload.append("gender", formData.gender);
       payload.append("statusMessage", formData.statusMessage.trim());
       payload.append("theme", formData.theme);
@@ -196,8 +198,31 @@ export default function ProfileSettings({ user, onClose, onUserUpdate }) {
               </div>
 
               <div className="form-group">
+                <label>Phone Number</label>
+                <input
+                  type="tel"
+                  className="form-control"
+                  required
+                  placeholder="e.g. 017xxxxxxxx"
+                  value={formData.phoneNumber}
+                  onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
                 <label>Email</label>
                 <input type="email" className="form-control" value={user.email} disabled />
+              </div>
+
+              <div className="form-group">
+                <label>Account Role</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={user.role === 'superadmin' ? 'Super Admin' : user.role === 'admin' ? 'Admin' : 'User'}
+                  disabled
+                  style={{ textTransform: 'capitalize', fontWeight: 600, color: user.role === 'superadmin' ? 'var(--accent-color)' : 'inherit' }}
+                />
               </div>
 
               <div className="form-group">

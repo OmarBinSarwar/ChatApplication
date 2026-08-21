@@ -11,9 +11,9 @@ router.get('/', authenticate, async (req, res) => {
     const conversations = await Conversation.find({
       $or: [{ creator: userId }, { participant: userId }, { participants: userId }]
     })
-    .populate('creator', 'name avatar isOnline lastSeen')
-    .populate('participant', 'name avatar isOnline lastSeen')
-    .populate('participants', 'name avatar isOnline lastSeen')
+    .populate('creator', 'name avatar phoneNumber isOnline lastSeen')
+    .populate('participant', 'name avatar phoneNumber isOnline lastSeen')
+    .populate('participants', 'name avatar phoneNumber isOnline lastSeen')
     .populate({
       path: 'pinnedMessage',
       populate: { path: 'sender', select: 'name' }

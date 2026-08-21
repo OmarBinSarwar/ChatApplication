@@ -9,6 +9,7 @@ const { router: authRouter } = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const conversationsRouter = require('./routes/conversations');
 const messagesRouter = require('./routes/messages');
+const adminRouter = require('./routes/admin');
 const { router: pushRouter } = require('./routes/push');
 const setupSocket = require('./socket/socket');
 const { startScheduler, setIo } = require('./scheduler/messageScheduler');
@@ -63,6 +64,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/messages', messagesRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api/push', pushRouter);
 
 // Initialize WebSockets

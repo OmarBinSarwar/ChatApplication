@@ -46,6 +46,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
 import ProfileSettings from "../components/ProfileSettings";
+import SuperAdminDashboard from "../components/SuperAdminDashboard";
 import { encryptMessage, decryptMessage, isEncrypted } from "../lib/encryption";
 
 const EMOJI_CATEGORIES = [
@@ -330,6 +331,13 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
 
   // Feature 7: E2E Encryption
   const [encryptionEnabled, setEncryptionEnabled] = useState(false);
+
+  // Super Admin & Phone Search states
+  const [showSuperAdmin, setShowSuperAdmin] = useState(false);
+  const [phoneSearchQuery, setPhoneSearchQuery] = useState('');
+  const [searchedUser, setSearchedUser] = useState(null);
+  const [phoneSearchLoading, setPhoneSearchLoading] = useState(false);
+  const [phoneSearchError, setPhoneSearchError] = useState('');
 
   // AI Summarize state
   const [showSummaryModal, setShowSummaryModal] = useState(false);
@@ -738,6 +746,22 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       setShowUsersPanel(false);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSearchByPhone = async (e) => {
+    if (e) e.preventDefault();
+    if (!phoneSearchQuery.trim()) return;
+    setPhoneSearchLoading(true);
+    setPhoneSearchError('');
+    setSearchedUser(null);
+    try {
+      const result = await fetchApi(`/api/users/search-phone?phone=${encodeURIComponent(phoneSearchQuery.trim())}`);
+      setSearchedUser(result);
+    } catch (err) {
+      setPhoneSearchError(err.message || 'No user found with this phone number');
+    } finally {
+      setPhoneSearchLoading(false);
     }
   };
 
@@ -1514,7 +1538,19 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
         <h1 className="mobile-title">OBS ChatApp</h1>
-        <LogOut size={20} className="logout-icon" onClick={onLogout} />
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          {(user.role === 'superadmin' || user.role === 'admin') && (
+            <button
+              className="menu-btn"
+              onClick={() => setShowSuperAdmin(true)}
+              title="Super Admin Panel"
+              style={{ color: "var(--accent-color)" }}
+            >
+              <Shield size={20} />
+            </button>
+          )}
+          <LogOut size={20} className="logout-icon" onClick={onLogout} />
+        </div>
       </div>
 
       {/* Sidebar Overlay */}
@@ -1530,6 +1566,15 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
         <div className="sidebar-brand">
           <MessageSquare size={18} className="sidebar-brand-icon" />
           <h2>OBS ChatApp</h2>
+          {(user.role === 'superadmin' || user.role === 'admin') && (
+            <span
+              className="superadmin-badge-pill"
+              onClick={() => setShowSuperAdmin(true)}
+              title="Open Super Admin Portal"
+            >
+              ADMIN
+            </span>
+          )}
         </div>
         <div className="sidebar-header">
           <img
@@ -1550,9 +1595,19 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           >
             <h3 style={{ fontSize: "1rem", margin: 0 }}>{user.name}</h3>
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-              {user.statusMessage || "Online"}
+              {user.phoneNumber ? `📞 ${user.phoneNumber}` : (user.statusMessage || "Online")}
             </span>
           </div>
+          {(user.role === 'superadmin' || user.role === 'admin') && (
+            <button
+              className="close-sidebar-btn super-admin-header-btn"
+              onClick={() => setShowSuperAdmin(true)}
+              title="Super Admin Panel"
+              style={{ color: "var(--accent-color)" }}
+            >
+              <Shield size={18} />
+            </button>
+          )}
           <button
             className="close-sidebar-btn profile-settings-btn"
             onClick={() => setShowProfileSettings(true)}
@@ -1636,7 +1691,14 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                         }
                       }}
                     />
-                    <span>{u.name}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span>{u.name}</span>
+                      {u.phoneNumber && (
+                        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                          ({u.phoneNumber})
+                        </span>
+                      )}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -1648,9 +1710,101 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           </div>
         ) : showUsersPanel ? (
           <div className="conversations-list">
+            <div style={{ padding: "0.75rem 1rem 0.25rem 1rem" }}>
+              <h4
+                style={{
+                  margin: "0 0 0.5rem 0",
+                  color: "var(--text-muted)",
+                  fontSize: "0.8rem",
+                  textTransform: "uppercase",
+                  fontWeight: 600,
+                  letterSpacing: "0.5px",
+                }}
+              >
+                Find by Phone Number
+              </h4>
+              <form onSubmit={handleSearchByPhone} style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <Phone size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                  <input
+                    type="tel"
+                    placeholder="Enter phone number..."
+                    value={phoneSearchQuery}
+                    onChange={(e) => {
+                      setPhoneSearchQuery(e.target.value);
+                      setPhoneSearchError('');
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "0.45rem 0.5rem 0.45rem 2rem",
+                      fontSize: "0.82rem",
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid var(--panel-border)",
+                      borderRadius: "6px",
+                      color: "white"
+                    }}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="btn"
+                  style={{ padding: "0.45rem 0.75rem", fontSize: "0.8rem" }}
+                  disabled={phoneSearchLoading}
+                >
+                  {phoneSearchLoading ? "..." : "Find"}
+                </button>
+              </form>
+
+              {phoneSearchError && (
+                <div style={{ fontSize: "0.75rem", color: "#f87171", marginBottom: "0.5rem" }}>
+                  {phoneSearchError}
+                </div>
+              )}
+
+              {searchedUser && (
+                <div
+                  className="glass"
+                  style={{
+                    padding: "0.6rem 0.75rem",
+                    borderRadius: "8px",
+                    marginBottom: "0.75rem",
+                    border: "1px solid var(--accent-color)",
+                    background: "rgba(20, 184, 166, 0.08)"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <img
+                        src={searchedUser.avatar ? getAttachmentUrl(searchedUser.avatar) : `https://ui-avatars.com/api/?name=${encodeURIComponent(searchedUser.name)}`}
+                        style={{ width: 34, height: 34, borderRadius: "50%" }}
+                        alt=""
+                      />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{searchedUser.name}</div>
+                        <div style={{ fontSize: "0.72rem", color: "var(--accent-color)", display: "flex", alignItems: "center", gap: "3px" }}>
+                          <Phone size={10} /> {searchedUser.phoneNumber}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      className="btn"
+                      style={{ padding: "0.35rem 0.65rem", fontSize: "0.75rem" }}
+                      onClick={() => {
+                        handleStartChat(searchedUser.id || searchedUser._id);
+                        setSearchedUser(null);
+                        setPhoneSearchQuery('');
+                      }}
+                    >
+                      Chat
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <h4
               style={{
-                margin: "1rem 1rem 0.5rem 1rem",
+                margin: "0.5rem 1rem 0.5rem 1rem",
                 color: "var(--text-muted)",
                 fontSize: "0.8rem",
                 textTransform: "uppercase",
@@ -1658,7 +1812,7 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                 letterSpacing: "0.5px",
               }}
             >
-              Available Users
+              All Contacts
             </h4>
             {users.map((u) => {
               const uId = u.id || u._id;
@@ -1685,8 +1839,15 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                     />
                     <span className={`status-badge-dot ${online ? "online" : "offline"}`} />
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <span style={{ fontWeight: 500 }}>{u.name}</span>
+                  <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontWeight: 500 }}>{u.name}</span>
+                      {u.phoneNumber && (
+                        <span style={{ fontSize: "0.72rem", color: "var(--accent-color)", display: "flex", alignItems: "center", gap: "2px" }}>
+                          <Phone size={10} /> {u.phoneNumber}
+                        </span>
+                      )}
+                    </div>
                     <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
                       {formatLastSeen(online, getUserLastSeen(uId, u.lastSeen))}
                     </span>
@@ -2620,6 +2781,13 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           onUserUpdate={(updatedUser) => {
             onUserUpdate(updatedUser);
           }}
+        />
+      )}
+
+      {showSuperAdmin && (
+        <SuperAdminDashboard
+          currentUser={user}
+          onClose={() => setShowSuperAdmin(false)}
         />
       )}
 

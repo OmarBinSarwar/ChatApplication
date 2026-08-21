@@ -1,14 +1,73 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { fetchApi } from '../lib/api';
-import { MessageSquare, Eye, EyeOff, Mail, Lock, User, Upload, CheckCircle2 } from 'lucide-react';
+import { MessageSquare, Eye, EyeOff, Mail, Lock, User, Upload, CheckCircle2, Phone, KeyRound, ArrowRight } from 'lucide-react';
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
-  const [formData, setFormData] = useState({ name: '', email: '', password: '', gender: '' });
+  const [formData, setFormData] = useState({ name: '', email: '', phoneNumber: '', otp: '', password: '', gender: '' });
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // OTP Verification States
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpTimer, setOtpTimer] = useState(0);
+  const [otpNotice, setOtpNotice] = useState('');
+
+  useEffect(() => {
+    let interval;
+    if (otpTimer > 0) {
+      interval = setInterval(() => {
+        setOtpTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [otpTimer]);
+
+  const handleSendOtp = async () => {
+    if (!formData.phoneNumber || !formData.phoneNumber.trim()) {
+      setError('Please enter your phone number first to receive OTP');
+      return;
+    }
+    setError('');
+    setOtpSending(true);
+    try {
+      const res = await fetchApi('/api/auth/send-otp', {
+        method: 'POST',
+        body: { phoneNumber: formData.phoneNumber.trim(), purpose: 'register' }
+      });
+      setOtpSent(true);
+      setOtpTimer(60);
+      if (res.devOtp) {
+        setOtpNotice(`Your OTP is: ${res.devOtp}`);
+        setFormData(prev => ({ ...prev, otp: res.devOtp }));
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to send OTP code');
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!formData.otp || formData.otp.trim().length < 4) {
+      setError('Please enter the verification code');
+      return;
+    }
+    setError('');
+    try {
+      await fetchApi('/api/auth/verify-otp', {
+        method: 'POST',
+        body: { phoneNumber: formData.phoneNumber.trim(), otp: formData.otp.trim() }
+      });
+      setOtpVerified(true);
+    } catch (err) {
+      setError(err.message || 'Invalid verification code');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -17,9 +76,23 @@ export default function Login({ onLogin }) {
 
     try {
       if (isRegister) {
+        if (!formData.phoneNumber || !formData.phoneNumber.trim()) {
+          setError('Phone number is required');
+          setLoading(false);
+          return;
+        }
+
+        if (!formData.otp || !formData.otp.trim()) {
+          setError('Please enter the 6-digit verification code sent to your phone');
+          setLoading(false);
+          return;
+        }
+
         const payload = new FormData();
-        payload.append('name', formData.name);
-        payload.append('email', formData.email);
+        payload.append('name', formData.name.trim());
+        payload.append('email', formData.email.trim());
+        payload.append('phoneNumber', formData.phoneNumber.trim());
+        payload.append('otp', formData.otp.trim());
         payload.append('password', formData.password);
         payload.append('gender', formData.gender);
         if (file) payload.append('avatar', file);
@@ -32,13 +105,13 @@ export default function Login({ onLogin }) {
         // Auto-login after register
         const loggedInUser = await fetchApi('/api/auth/login', {
           method: 'POST',
-          body: { email: formData.email, password: formData.password },
+          body: { identifier: formData.phoneNumber.trim() || formData.email.trim(), password: formData.password },
         });
         onLogin(loggedInUser);
       } else {
         const user = await fetchApi('/api/auth/login', {
           method: 'POST',
-          body: { email: formData.email, password: formData.password },
+          body: { identifier: formData.email.trim(), password: formData.password },
         });
         onLogin(user);
       }
@@ -105,30 +178,80 @@ export default function Login({ onLogin }) {
           </div>
 
           {error && <div className="login-error-alert">{error}</div>}
+          {otpNotice && (
+            <div className="login-success-alert" style={{ background: "rgba(20, 184, 166, 0.15)", border: "1px solid rgba(20, 184, 166, 0.4)", color: "var(--accent-color)", padding: "0.75rem 1rem", borderRadius: "8px", marginBottom: "1rem", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <CheckCircle2 size={16} />
+              <span>{otpNotice} (Auto-filled for testing)</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="login-form">
             {isRegister && (
-              <div className="form-group modern-input-group">
-                <div className="input-with-icon">
-                  <User size={18} className="input-icon" />
-                  <input 
-                    type="text" 
-                    placeholder="Full Name"
-                    className="form-control modern-input" 
-                    required 
-                    value={formData.name} 
-                    onChange={(e) => setFormData({...formData, name: e.target.value})} 
-                  />
+              <>
+                <div className="form-group modern-input-group">
+                  <div className="input-with-icon">
+                    <User size={18} className="input-icon" />
+                    <input 
+                      type="text" 
+                      placeholder="Full Name"
+                      className="form-control modern-input" 
+                      required 
+                      value={formData.name} 
+                      onChange={(e) => setFormData({...formData, name: e.target.value})} 
+                    />
+                  </div>
                 </div>
-              </div>
+
+                <div className="form-group modern-input-group">
+                  <div className="input-with-icon" style={{ display: "flex", gap: "0.5rem" }}>
+                    <div style={{ position: "relative", flex: 1 }}>
+                      <Phone size={18} className="input-icon" />
+                      <input 
+                        type="tel" 
+                        placeholder="Phone Number (e.g. 017xxxxxxxx)"
+                        className="form-control modern-input" 
+                        required 
+                        value={formData.phoneNumber} 
+                        onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})} 
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ padding: "0.6rem 1rem", fontSize: "0.82rem", whiteSpace: "nowrap" }}
+                      onClick={handleSendOtp}
+                      disabled={otpSending || otpTimer > 0}
+                    >
+                      {otpSending ? "Sending..." : otpTimer > 0 ? `Resend (${otpTimer}s)` : (otpSent ? "Resend OTP" : "Send OTP")}
+                    </button>
+                  </div>
+                </div>
+
+                {otpSent && (
+                  <div className="form-group modern-input-group">
+                    <div className="input-with-icon">
+                      <KeyRound size={18} className="input-icon" />
+                      <input 
+                        type="text" 
+                        maxLength={6}
+                        placeholder="Enter 6-digit OTP Code"
+                        className="form-control modern-input" 
+                        required 
+                        value={formData.otp} 
+                        onChange={(e) => setFormData({...formData, otp: e.target.value})} 
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             
             <div className="form-group modern-input-group">
               <div className="input-with-icon">
                 <Mail size={18} className="input-icon" />
                 <input 
-                  type="email" 
-                  placeholder="Email Address"
+                  type={isRegister ? "email" : "text"} 
+                  placeholder={isRegister ? "Email Address" : "Email or Phone Number"}
                   className="form-control modern-input" 
                   required 
                   value={formData.email} 

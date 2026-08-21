@@ -3,13 +3,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { upload } = require('../config/cloudinary');
 const User = require('../models/User');
+const Otp = require('../models/Otp');
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
 
 const issueToken = (user) => {
   return jwt.sign(
-    { id: user._id, email: user.email, name: user.name, avatar: user.avatar },
+    { id: user._id, email: user.email, name: user.name, avatar: user.avatar, role: user.role, phoneNumber: user.phoneNumber },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -28,21 +29,119 @@ const authenticate = (req, res, next) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // { id, email, name, avatar }
+    req.user = decoded; // { id, email, name, avatar, role, phoneNumber }
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 };
 
+// Send OTP to phone number
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { phoneNumber, purpose } = req.body;
+    if (!phoneNumber || !phoneNumber.trim()) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    const cleanPhone = phoneNumber.trim().replace(/\s+/g, '');
+    if (cleanPhone.length < 6) {
+      return res.status(400).json({ error: 'Please provide a valid phone number' });
+    }
+
+    if (purpose === 'register') {
+      const existing = await User.findOne({ phoneNumber: cleanPhone });
+      if (existing) {
+        return res.status(400).json({ error: 'Phone number is already in use by another account' });
+      }
+    }
+
+    // Generate 6 digit numeric code
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+    // Clear previous pending OTPs for this number
+    await Otp.deleteMany({ phoneNumber: cleanPhone });
+
+    await Otp.create({
+      phoneNumber: cleanPhone,
+      otp: otpCode,
+      expiresAt,
+      verified: false
+    });
+
+    console.log(`\n========================================\n[OTP SENT] To: ${cleanPhone} | CODE: ${otpCode}\n========================================\n`);
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${cleanPhone}`,
+      devOtp: otpCode // Provided for instant local developer testing
+    });
+  } catch (err) {
+    console.error('Send OTP error:', err);
+    res.status(500).json({ error: 'Failed to send OTP' });
+  }
+});
+
+// Verify OTP
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phoneNumber, otp } = req.body;
+    if (!phoneNumber || !otp) {
+      return res.status(400).json({ error: 'Phone number and OTP code are required' });
+    }
+    const cleanPhone = phoneNumber.trim().replace(/\s+/g, '');
+    const cleanOtp = otp.trim();
+
+    const record = await Otp.findOne({
+      phoneNumber: cleanPhone,
+      otp: cleanOtp,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!record) {
+      return res.status(400).json({ error: 'Invalid or expired OTP code. Please request a new one.' });
+    }
+
+    record.verified = true;
+    await record.save();
+
+    res.json({
+      success: true,
+      message: 'Phone number verified successfully'
+    });
+  } catch (err) {
+    console.error('Verify OTP error:', err);
+    res.status(500).json({ error: 'Failed to verify OTP' });
+  }
+});
+
 router.post('/register', upload.single('avatar'), async (req, res) => {
   try {
-    const { name, email, password, gender } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
+    const { name, email, phoneNumber, otp, password, gender } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Missing required fields' });
+    if (!phoneNumber || !phoneNumber.trim()) return res.status(400).json({ error: 'Phone number is required' });
+    
+    const cleanPhone = phoneNumber.trim().replace(/\s+/g, '');
+    if (cleanPhone.length < 6) return res.status(400).json({ error: 'Please provide a valid phone number' });
+
     if (!gender || !['boy', 'girl'].includes(gender)) return res.status(400).json({ error: 'Gender must be boy or girl' });
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ error: 'Email already in use' });
+    // Verify OTP validation
+    if (otp) {
+      const record = await Otp.findOne({ phoneNumber: cleanPhone, otp: otp.trim() });
+      if (!record) return res.status(400).json({ error: 'Invalid OTP code. Please enter the correct code.' });
+    } else {
+      const verifiedOtp = await Otp.findOne({ phoneNumber: cleanPhone, verified: true });
+      if (!verifiedOtp) {
+        return res.status(400).json({ error: 'Please verify your phone number with the OTP code first' });
+      }
+    }
+
+    const existingEmail = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingEmail) return res.status(400).json({ error: 'Email already in use' });
+
+    const existingPhone = await User.findOne({ phoneNumber: cleanPhone });
+    if (existingPhone) return res.status(400).json({ error: 'Phone number already in use' });
 
     // Use uploaded avatar, or a gender-based default avatar
     let avatar = req.file ? req.file.path : null;
@@ -57,8 +156,9 @@ router.post('/register', upload.single('avatar'), async (req, res) => {
     const hashedPassword = bcrypt.hashSync(password, 10);
 
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phoneNumber: cleanPhone,
       password: hashedPassword,
       avatar,
       gender
@@ -73,8 +173,23 @@ router.post('/register', upload.single('avatar'), async (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    const { email, phoneNumber, identifier, password } = req.body;
+    const loginKey = (identifier || email || phoneNumber || '').trim();
+    if (!loginKey || !password) return res.status(400).json({ error: 'Please enter your email/phone and password' });
+
+    const cleanLoginKey = loginKey.replace(/\s+/g, '');
+    // Suffix for BD numbers (e.g. last 10 digits like 17XXXXXXXX)
+    const digitsOnly = cleanLoginKey.replace(/\D/g, '');
+    const last10 = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+
+    const user = await User.findOne({
+      $or: [
+        { email: loginKey.toLowerCase() },
+        { phoneNumber: loginKey },
+        { phoneNumber: cleanLoginKey },
+        { phoneNumber: { $regex: `${last10}$`, $options: 'i' } }
+      ]
+    });
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
     const validPassword = bcrypt.compareSync(password, user.password);
@@ -109,12 +224,21 @@ router.put('/me', authenticate, upload.single('avatar'), async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const { name, gender, statusMessage, theme, accentColor, currentPassword, newPassword } = req.body;
+    const { name, phoneNumber, gender, statusMessage, theme, accentColor, currentPassword, newPassword } = req.body;
 
     if (name !== undefined) {
       const trimmed = name.trim();
       if (!trimmed) return res.status(400).json({ error: 'Name cannot be empty' });
       user.name = trimmed;
+    }
+
+    if (phoneNumber !== undefined) {
+      const cleanPhone = phoneNumber.trim().replace(/\s+/g, '');
+      if (!cleanPhone) return res.status(400).json({ error: 'Phone number cannot be empty' });
+      if (cleanPhone.length < 6) return res.status(400).json({ error: 'Please provide a valid phone number' });
+      const duplicate = await User.findOne({ phoneNumber: cleanPhone, _id: { $ne: user._id } });
+      if (duplicate) return res.status(400).json({ error: 'Phone number is already in use by another account' });
+      user.phoneNumber = cleanPhone;
     }
 
     if (gender !== undefined) {
