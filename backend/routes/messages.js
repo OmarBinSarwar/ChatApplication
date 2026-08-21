@@ -4,19 +4,48 @@ const { authenticate } = require('./auth');
 const { upload } = require('../config/cloudinary');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const User = require('../models/User');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const router = express.Router();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Get messages for a conversation (with replyTo populated)
+// Helper: detect attachment type from file
+const detectAttachmentType = (file) => {
+  if (!file) return null;
+  const mime = file.mimetype || '';
+  const name = (file.originalname || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/') || mime.startsWith('video/') || name.match(/\.(mp3|wav|webm|ogg|m4a|aac|flac)$/)) return 'audio';
+  if (mime.startsWith('video/') || name.match(/\.(mp4|mov|avi|mkv)$/)) return 'video';
+  return 'document';
+};
+
+// Helper: extract @mention userIds from text within a conversation
+const extractMentions = async (text, conversationId) => {
+  if (!text || !text.includes('@')) return [];
+  const conv = await Conversation.findById(conversationId).populate('participants', 'name');
+  if (!conv || !conv.isGroup) return [];
+  const mentionedIds = [];
+  for (const participant of conv.participants) {
+    if (text.toLowerCase().includes(`@${participant.name.toLowerCase()}`)) {
+      mentionedIds.push(participant._id);
+    }
+  }
+  return mentionedIds;
+};
+
+// Get messages for a conversation (with replyTo populated, excludes pending/cancelled scheduled)
 router.get('/:conversationId', authenticate, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const messages = await Message.find({ conversationId })
+    const messages = await Message.find({
+      conversationId,
+      $or: [{ status: 'sent' }, { status: { $exists: false } }]
+    })
       .populate({
         path: 'replyTo',
-        select: 'text sender attachment isDeleted',
+        select: 'text sender attachment isDeleted attachmentType attachmentName',
         populate: { path: 'sender', select: 'name' }
       })
       .sort({ createdAt: 1 });
@@ -27,13 +56,54 @@ router.get('/:conversationId', authenticate, async (req, res) => {
   }
 });
 
-// Send a new message (supports replyToId)
+// Feature 3: Search messages in a conversation
+router.get('/:conversationId/search', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { q } = req.query;
+    if (!q || !q.trim()) return res.json([]);
+
+    const messages = await Message.find({
+      conversationId,
+      isDeleted: false,
+      status: { $ne: 'pending' },
+      text: { $regex: q.trim(), $options: 'i' }
+    })
+      .populate({ path: 'replyTo', select: 'text sender', populate: { path: 'sender', select: 'name' } })
+      .sort({ createdAt: 1 })
+      .limit(50);
+
+    res.json(messages);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Feature 7: Get scheduled (pending) messages for a conversation
+router.get('/:conversationId/scheduled', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+    const messages = await Message.find({
+      conversationId,
+      sender: userId,
+      status: 'pending'
+    }).sort({ scheduledFor: 1 });
+    res.json(messages);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Send a new message (supports replyToId, file attachments, scheduling, mentions)
 router.post('/:conversationId', authenticate, upload.single('attachment'), async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { text, receiverId, replyToId, audioDuration } = req.body;
+    const { text, receiverId, replyToId, audioDuration, scheduledFor } = req.body;
     const senderId = req.user.id;
-    
+
     let finalReceiverId = receiverId;
     if (!finalReceiverId) {
       const conv = await Conversation.findById(conversationId);
@@ -46,27 +116,44 @@ router.post('/:conversationId', authenticate, upload.single('attachment'), async
     }
 
     const attachment = req.file ? req.file.path : null;
-    
+    const attachmentType = req.file ? detectAttachmentType(req.file) : null;
+    const attachmentName = req.file ? req.file.originalname : null;
+    const attachmentSize = req.file ? req.file.size : null;
+
+    // Feature 4: Extract @mentions
+    const mentions = await extractMentions(text, conversationId);
+
+    // Feature 7: Scheduling
+    const isScheduled = scheduledFor && new Date(scheduledFor) > new Date();
+    const msgStatus = isScheduled ? 'pending' : 'sent';
+
     const newMsg = await Message.create({
       text: text || '',
       attachment,
+      attachmentType,
+      attachmentName,
+      attachmentSize,
       sender: senderId,
       receiver: finalReceiverId || null,
       conversationId,
       readBy: [senderId],
       replyTo: replyToId || null,
-      audioDuration: audioDuration ? parseFloat(audioDuration) : null
+      audioDuration: audioDuration ? parseFloat(audioDuration) : null,
+      mentions,
+      scheduledFor: isScheduled ? new Date(scheduledFor) : null,
+      status: msgStatus,
     });
 
-    // Populate replyTo before sending response
     const populatedMsg = await Message.findById(newMsg._id).populate({
       path: 'replyTo',
-      select: 'text sender attachment isDeleted',
+      select: 'text sender attachment isDeleted attachmentType attachmentName',
       populate: { path: 'sender', select: 'name' }
     });
-    
-    await Conversation.findByIdAndUpdate(conversationId, { lastUpdated: Date.now() });
-    
+
+    if (!isScheduled) {
+      await Conversation.findByIdAndUpdate(conversationId, { lastUpdated: Date.now() });
+    }
+
     res.status(201).json(populatedMsg);
   } catch (err) {
     console.error(err);
@@ -79,12 +166,12 @@ router.put('/:conversationId/read', authenticate, async (req, res) => {
   try {
     const { conversationId } = req.params;
     const userId = req.user.id;
-    
+
     await Message.updateMany(
       { conversationId, readBy: { $ne: userId } },
       { $push: { readBy: userId } }
     );
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -92,7 +179,50 @@ router.put('/:conversationId/read', authenticate, async (req, res) => {
   }
 });
 
-// Like/unlike a message
+// Feature 2: React to a message with an emoji (replaces /like)
+router.post('/:messageId/react', authenticate, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { emoji } = req.body;
+    const userId = req.user.id;
+
+    if (!emoji) return res.status(400).json({ error: 'emoji is required' });
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    const existingReactionIdx = message.reactions.findIndex(
+      r => r.userId.toString() === userId.toString()
+    );
+
+    if (existingReactionIdx !== -1) {
+      const existingEmoji = message.reactions[existingReactionIdx].emoji;
+      if (existingEmoji === emoji) {
+        // Same emoji → remove reaction
+        message.reactions.splice(existingReactionIdx, 1);
+      } else {
+        // Different emoji → update reaction
+        message.reactions[existingReactionIdx].emoji = emoji;
+      }
+    } else {
+      // New reaction
+      message.reactions.push({ userId, emoji });
+    }
+
+    await message.save();
+    const updated = await Message.findById(messageId).populate({
+      path: 'replyTo',
+      select: 'text sender attachment isDeleted',
+      populate: { path: 'sender', select: 'name' }
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Legacy: Like/unlike a message (kept for backward compat)
 router.post('/:messageId/like', authenticate, async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -149,7 +279,7 @@ router.put('/:messageId', authenticate, async (req, res) => {
 
     const updated = await Message.findById(messageId).populate({
       path: 'replyTo',
-      select: 'text sender attachment isDeleted',
+      select: 'text sender attachment isDeleted attachmentType attachmentName',
       populate: { path: 'sender', select: 'name' }
     });
     res.json(updated);
@@ -178,10 +308,34 @@ router.delete('/:messageId', authenticate, async (req, res) => {
 
     const updated = await Message.findById(messageId).populate({
       path: 'replyTo',
-      select: 'text sender attachment isDeleted',
+      select: 'text sender attachment isDeleted attachmentType attachmentName',
       populate: { path: 'sender', select: 'name' }
     });
     res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Feature 7: Cancel a scheduled message
+router.delete('/:messageId/scheduled', authenticate, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.id;
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+    if (message.sender.toString() !== userId.toString()) {
+      return res.status(403).json({ error: 'You can only cancel your own scheduled messages' });
+    }
+    if (message.status !== 'pending') {
+      return res.status(400).json({ error: 'Message is not pending' });
+    }
+
+    message.status = 'cancelled';
+    await message.save();
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -217,6 +371,9 @@ router.post('/forward', authenticate, async (req, res) => {
       const newMsg = await Message.create({
         text: sourceMessage.text || '',
         attachment: sourceMessage.attachment || null,
+        attachmentType: sourceMessage.attachmentType || null,
+        attachmentName: sourceMessage.attachmentName || null,
+        attachmentSize: sourceMessage.attachmentSize || null,
         audioDuration: sourceMessage.audioDuration || null,
         sender: senderId,
         receiver: receiverId,
@@ -229,7 +386,7 @@ router.post('/forward', authenticate, async (req, res) => {
 
       const populatedMsg = await Message.findById(newMsg._id).populate({
         path: 'replyTo',
-        select: 'text sender attachment isDeleted',
+        select: 'text sender attachment isDeleted attachmentType attachmentName',
         populate: { path: 'sender', select: 'name' }
       });
 
@@ -248,7 +405,6 @@ router.post('/:conversationId/summarize', authenticate, async (req, res) => {
   try {
     const { conversationId } = req.params;
 
-    // Fetch all non-deleted messages in the conversation
     let queryId;
     try {
       queryId = new mongoose.Types.ObjectId(conversationId);
@@ -262,7 +418,6 @@ router.post('/:conversationId/summarize', authenticate, async (req, res) => {
 
     console.log(`[Summarize] Found ${messages.length} total messages for conversation ${conversationId}`);
 
-    // Filter out deleted messages
     const activeMessages = messages.filter(m => !m.isDeleted);
 
     console.log(`[Summarize] ${activeMessages.length} active messages after filter`);
@@ -271,7 +426,6 @@ router.post('/:conversationId/summarize', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'No messages to summarize' });
     }
 
-    // Format messages — include text and note attachments/audio
     const formattedLines = activeMessages.map(m => {
       const senderName = m.sender?.name || 'User';
       if (m.text && m.text.trim()) {
@@ -290,14 +444,8 @@ router.post('/:conversationId/summarize', authenticate, async (req, res) => {
 
     const formattedMessages = formattedLines.join('\n');
 
-    // Call Gemini AI
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const prompt = `You are a helpful assistant. Summarize the following chat conversation concisely in 3-5 sentences. Mention the main topics discussed and any decisions made. Respond in the same language as the conversation.
-
-Conversation:
-${formattedMessages}
-
-Summary:`;
+    const prompt = `You are a helpful assistant. Summarize the following chat conversation concisely in 3-5 sentences. Mention the main topics discussed and any decisions made. Respond in the same language as the conversation.\n\nConversation:\n${formattedMessages}\n\nSummary:`;
 
     const result = await model.generateContent(prompt);
     const summary = result.response.text();

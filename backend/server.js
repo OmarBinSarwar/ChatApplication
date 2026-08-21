@@ -9,7 +9,9 @@ const { router: authRouter } = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const conversationsRouter = require('./routes/conversations');
 const messagesRouter = require('./routes/messages');
+const { router: pushRouter } = require('./routes/push');
 const setupSocket = require('./socket/socket');
+const { startScheduler, setIo } = require('./scheduler/messageScheduler');
 
 const app = express();
 const server = http.createServer(app);
@@ -25,9 +27,8 @@ app.use((req, res, next) => {
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like curl)
     if (!origin) return callback(null, true);
-    
+
     if (process.env.NODE_ENV === 'production') {
       const formattedFrontendUrl = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : '';
       const formattedOrigin = origin.replace(/\/$/, '');
@@ -37,18 +38,18 @@ app.use(cors({
         return callback(new Error(`Not allowed by CORS in production. Origin: ${origin}, FRONTEND_URL: ${process.env.FRONTEND_URL}`));
       }
     }
-    
+
     // In development, allow localhost, 127.0.0.1, and local network IPs
     if (
-      origin.includes('localhost') || 
-      origin.includes('127.0.0.1') || 
-      origin.startsWith('http://192.168.') || 
-      origin.startsWith('http://10.') || 
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.startsWith('http://192.168.') ||
+      origin.startsWith('http://10.') ||
       origin.startsWith('http://172.')
     ) {
       return callback(null, true);
     }
-    
+
     return callback(new Error('Not allowed by CORS in development'));
   },
   credentials: true
@@ -62,9 +63,14 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/messages', messagesRouter);
+app.use('/api/push', pushRouter);
 
 // Initialize WebSockets
-setupSocket(server);
+const io = setupSocket(server);
+
+// Feature 7: Set io instance for scheduler and start it
+setIo(io);
+startScheduler();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

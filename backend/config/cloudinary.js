@@ -16,7 +16,7 @@ const storage = new CloudinaryStorage({
     return {
       folder: folder,
       resource_type: resource_type,
-      allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip', 'mp3', 'wav', 'webm', 'ogg', 'm4a', 'aac', 'mp4'],
+      allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip', 'rar', 'mp3', 'wav', 'webm', 'ogg', 'm4a', 'aac', 'mp4', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'],
     };
   },
 });

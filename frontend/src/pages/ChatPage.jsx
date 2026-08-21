@@ -29,11 +29,24 @@ import {
   CornerUpRight,
   FileText,
   Sparkles,
+  Paperclip,
+  Clock,
+  Shield,
+  ShieldCheck,
+  Download,
+  File,
+  FileSpreadsheet,
+  Presentation,
+  AtSign,
+  Calendar,
+  Bell,
+  BellOff,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 import { BASE_URL, fetchApi } from "../lib/api";
 import ProfileSettings from "../components/ProfileSettings";
+import { encryptMessage, decryptMessage, isEncrypted } from "../lib/encryption";
 
 const EMOJI_CATEGORIES = [
   {
@@ -69,12 +82,47 @@ const getAttachmentUrl = (url) => {
   return `${BASE_URL}${url}`;
 };
 
-const isAudioAttachment = (url) => {
+const isAudioAttachment = (url, type) => {
+  if (type === 'audio') return true;
   if (!url) return false;
   const lower = url.toLowerCase();
   const audioExtensions = [".mp3", ".wav", ".webm", ".ogg", ".m4a", ".aac", ".flac"];
   return audioExtensions.some((ext) => lower.includes(ext)) || lower.includes("voice_message") || lower.includes("/video/upload/");
 };
+
+const isImageAttachment = (url, type) => {
+  if (type === 'image') return true;
+  if (type && type !== 'image') return false;
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/) || lower.includes('/image/upload/');
+};
+
+const isDocumentAttachment = (url, type) => {
+  if (type === 'document') return true;
+  if (!url || type === 'image' || type === 'audio' || type === 'video') return false;
+  const lower = url.toLowerCase();
+  return lower.match(/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar)(\?|$)/);
+};
+
+const getDocumentIcon = (name, url) => {
+  const ext = (name || url || '').toLowerCase().split('.').pop();
+  if (['xls', 'xlsx'].includes(ext)) return FileSpreadsheet;
+  if (['ppt', 'pptx'].includes(ext)) return Presentation;
+  if (['pdf'].includes(ext)) return FileText;
+  return File;
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Feature 2: Quick reaction emojis
+const QUICK_REACTIONS = ['❤️', '😂', '👍', '😮', '😢', '🔥'];
+
 
 function VoiceMessagePlayer({ src, duration, isSender }) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -252,6 +300,36 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   const [lastSeenMap, setLastSeenMap] = useState({});
   const [forwardingMessage, setForwardingMessage] = useState(null);
   const [selectedForwardTargetIds, setSelectedForwardTargetIds] = useState([]);
+
+  // Feature 2: Emoji Reactions
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState(null);
+
+  // Feature 3: Message Search
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchInputRef = useRef(null);
+
+  // Feature 4: @Mention
+  const [mentionSuggestions, setMentionSuggestions] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const [mentionToast, setMentionToast] = useState(null);
+
+  // Feature 5: File/Document type
+  const [fileType, setFileType] = useState(null); // 'image' | 'document'
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
+
+  // Feature 7: Message Scheduling
+  const [showScheduler, setShowScheduler] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState('');
+  const [scheduledMessages, setScheduledMessages] = useState([]);
+  const [showScheduledPanel, setShowScheduledPanel] = useState(false);
+
+  // Feature 7: E2E Encryption
+  const [encryptionEnabled, setEncryptionEnabled] = useState(false);
 
   // AI Summarize state
   const [showSummaryModal, setShowSummaryModal] = useState(false);
@@ -441,6 +519,19 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       setMessages(prev => prev.map(m =>
         isSameId(m, updatedMsg) ? { ...m, like_count: updatedMsg.like_count, liked_by: updatedMsg.liked_by } : m
       ));
+    });
+
+    // Feature 2: Emoji Reactions
+    socketRef.current.on("message_reacted", (updatedMsg) => {
+      setMessages(prev => prev.map(m =>
+        isSameId(m, updatedMsg) ? updatedMsg : m
+      ));
+    });
+
+    // Feature 4: @Mention toast
+    socketRef.current.on("you_were_mentioned", (data) => {
+      setMentionToast(`${data.senderName} mentioned you in ${data.conversationName || 'a conversation'}`);
+      setTimeout(() => setMentionToast(null), 5000);
     });
 
     socketRef.current.on("message_edited", (updatedMsg) => {
@@ -676,6 +767,26 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  // Feature 2: Emoji Reaction handler
+  const handleReact = async (msg, emoji) => {
+    try {
+      const msgId = msg.id || msg._id;
+      const updated = await fetchApi(`/api/messages/${msgId}/react`, {
+        method: "POST",
+        body: { emoji },
+      });
+      setMessages(prev => prev.map(m => isSameId(m, msgId) ? updated : m));
+      socketRef.current.emit("message_reacted", {
+        conversationId: activeConversationRef.current?.id,
+        updatedMessage: updated,
+      });
+      setReactionPickerMsgId(null);
+    } catch (e) {
+      console.error("Failed to react to message", e);
+    }
+  };
+
+  // Legacy handleLike (still works for backward compat)
   const handleLike = async (msg) => {
     try {
       const msgId = msg.id || msg._id;
@@ -683,7 +794,6 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
       setMessages(prev => prev.map(m =>
         isSameId(m, msgId) ? { ...m, like_count: updated.like_count, liked_by: updated.liked_by } : m
       ));
-      // broadcast to others in conversation
       socketRef.current.emit("message_liked", {
         conversationId: activeConversationRef.current?.id,
         updatedMessage: updated
@@ -691,6 +801,99 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     } catch (e) {
       console.error("Failed to like message", e);
     }
+  };
+
+  // Feature 3: Message Search
+  const handleSearch = async (q) => {
+    setSearchQuery(q);
+    if (!q.trim() || !activeConversation) {
+      setSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const results = await fetchApi(`/api/messages/${activeConversation.id}/search?q=${encodeURIComponent(q)}`);
+      setSearchResults(results);
+    } catch (e) {
+      console.error("Search failed", e);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const scrollToMessage = (msgId) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.transition = "background 0.3s";
+      el.style.background = "rgba(167, 139, 250, 0.25)";
+      setTimeout(() => { el.style.background = ""; }, 2000);
+    }
+  };
+
+  // Feature 4: @Mention — detect @ in input
+  const handleMentionInput = (value) => {
+    if (!activeConversation?.isGroup) return;
+    const atIdx = value.lastIndexOf('@');
+    if (atIdx !== -1) {
+      const query = value.slice(atIdx + 1).toLowerCase();
+      const participants = activeConversation.participants || [];
+      const matches = participants.filter(p => p.name.toLowerCase().startsWith(query));
+      if (matches.length > 0) {
+        setMentionSuggestions(matches);
+        setMentionQuery(query);
+        setShowMentionSuggestions(true);
+        return;
+      }
+    }
+    setShowMentionSuggestions(false);
+    setMentionSuggestions([]);
+  };
+
+  const insertMention = (participant) => {
+    const atIdx = newMessage.lastIndexOf('@');
+    const before = newMessage.slice(0, atIdx);
+    setNewMessage(before + `@${participant.name} `);
+    setShowMentionSuggestions(false);
+    setMentionSuggestions([]);
+  };
+
+  // Feature 5: File select handler
+  const handleFileSelect = (e) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      const mime = selectedFile.type || '';
+      if (mime.startsWith('image/')) setFileType('image');
+      else setFileType('document');
+    }
+  };
+
+  // Feature 7: Fetch scheduled messages
+  const fetchScheduledMessages = async () => {
+    if (!activeConversation) return;
+    try {
+      const data = await fetchApi(`/api/messages/${activeConversation.id}/scheduled`);
+      setScheduledMessages(data);
+    } catch (e) {
+      console.error("Failed to fetch scheduled messages", e);
+    }
+  };
+
+  const handleCancelScheduled = async (msgId) => {
+    try {
+      await fetchApi(`/api/messages/${msgId}/scheduled`, { method: "DELETE" });
+      setScheduledMessages(prev => prev.filter(m => (m.id || m._id) !== msgId));
+    } catch (e) {
+      console.error("Failed to cancel scheduled message", e);
+    }
+  };
+
+  // Get min datetime for scheduling (at least 1 minute in future)
+  const getMinDateTime = () => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 1);
+    return now.toISOString().slice(0, 16);
   };
 
   const handleConversationClick = async (c) => {
@@ -880,15 +1083,15 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
     return () => URL.revokeObjectURL(previewUrl);
   }, [file]);
 
-  const handleFileSelect = (e) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) setFile(selectedFile);
-  };
 
   const handleRemoveFile = () => {
     setFile(null);
+    setFileType(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (imageInputRef.current) imageInputRef.current.value = "";
+    if (docInputRef.current) docInputRef.current.value = "";
   };
+
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -927,32 +1130,72 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
 
     try {
       const payload = new FormData();
-      payload.append("text", newMessage);
+
+      // Feature 7: Encrypt message if enabled
+      let textToSend = newMessage;
+      if (encryptionEnabled && newMessage.trim() && activeConversation) {
+        textToSend = await encryptMessage(newMessage, activeConversation.id);
+      }
+
+      payload.append("text", textToSend);
       if (activeConversation && !activeConversation.isGroup) {
         payload.append("receiverId", activeConversation.other_user.id);
       }
       if (file) payload.append("attachment", file);
+
+      // Feature 7: Scheduling
+      if (showScheduler && scheduledFor) {
+        payload.append("scheduledFor", scheduledFor);
+      }
 
       const msg = await fetchApi(`/api/messages/${activeConversation.id}`, {
         method: "POST",
         body: payload,
       });
 
+      if (showScheduler && scheduledFor) {
+        // Scheduled message — just update scheduled list
+        setScheduledMessages(prev => [...prev, msg]);
+        setShowScheduler(false);
+        setScheduledFor('');
+        setNewMessage('');
+        setFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+
       // Instant feedback for sender
       setMessages((prev) => [...prev, msg]);
 
-      const notifyUsers = activeConversation.isGroup 
-        ? activeConversation.participants || []
+      const notifyUsers = activeConversation.isGroup
+        ? (activeConversation.participants || []).map(p => p.id || p._id)
         : [activeConversation.other_user._id || activeConversation.other_user.id];
 
       socketRef.current.emit("send_message", { msg, notifyUsers });
+
+      // Feature 4: Emit mention notifications
+      if (msg.mentions && msg.mentions.length > 0) {
+        msg.mentions.forEach(mentionedUserId => {
+          socketRef.current.emit("user_mentioned", {
+            mentionedUserId,
+            conversationId: activeConversation.id,
+            senderName: user.name,
+            conversationName: activeConversation.isGroup ? activeConversation.groupName : user.name,
+          });
+        });
+      }
+
       socketRef.current.emit("stop_typing", {
         conversationId: activeConversation.id,
         userId: user.id,
       });
       setNewMessage("");
       setFile(null);
+      setFileType(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (imageInputRef.current) imageInputRef.current.value = "";
+      if (docInputRef.current) docInputRef.current.value = "";
+      setShowMentionSuggestions(false);
       fetchConversations();
     } catch (e) {
       console.error(e);
@@ -983,7 +1226,10 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
   };
 
   const handleTyping = (e) => {
-    setNewMessage(e.target.value);
+    const value = e.target.value;
+    setNewMessage(value);
+    // Feature 4: @Mention detection
+    handleMentionInput(value);
     if (activeConversation) {
       socketRef.current.emit("typing", {
         conversationId: activeConversation.id,
@@ -1634,6 +1880,60 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
             >
               <Sparkles size={17} />
             </button>
+            {/* Feature 3: Search */}
+            <button
+              title="Search Messages"
+              style={{
+                marginLeft: "0.4rem",
+                background: showSearch ? "rgba(167,139,250,0.25)" : "rgba(255,255,255,0.07)",
+                border: `1px solid ${showSearch ? "rgba(167,139,250,0.5)" : "rgba(255,255,255,0.12)"}`,
+                borderRadius: "50%",
+                width: 36, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer",
+                color: showSearch ? "#c4b5fd" : "rgba(255,255,255,0.7)",
+              }}
+              onClick={() => { setShowSearch(s => !s); setSearchQuery(''); setSearchResults([]); }}
+              type="button"
+            >
+              <Search size={17} />
+            </button>
+            {/* Feature 7: Encryption Toggle */}
+            <button
+              title={encryptionEnabled ? "Encryption ON — click to disable" : "Enable E2E Encryption"}
+              style={{
+                marginLeft: "0.4rem",
+                background: encryptionEnabled ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.07)",
+                border: `1px solid ${encryptionEnabled ? "rgba(34,197,94,0.5)" : "rgba(255,255,255,0.12)"}`,
+                borderRadius: "50%",
+                width: 36, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer",
+                color: encryptionEnabled ? "#4ade80" : "rgba(255,255,255,0.5)",
+              }}
+              onClick={() => setEncryptionEnabled(e => !e)}
+              type="button"
+            >
+              {encryptionEnabled ? <ShieldCheck size={17} /> : <Shield size={17} />}
+            </button>
+            {/* Feature 7: Scheduled Messages */}
+            <button
+              title="Scheduled Messages"
+              style={{
+                marginLeft: "0.4rem",
+                background: showScheduledPanel ? "rgba(251,191,36,0.2)" : "rgba(255,255,255,0.07)",
+                border: `1px solid ${showScheduledPanel ? "rgba(251,191,36,0.4)" : "rgba(255,255,255,0.12)"}`,
+                borderRadius: "50%",
+                width: 36, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer",
+                color: showScheduledPanel ? "#fbbf24" : "rgba(255,255,255,0.5)",
+              }}
+              onClick={() => { setShowScheduledPanel(s => !s); fetchScheduledMessages(); }}
+              type="button"
+            >
+              <Clock size={17} />
+            </button>
           </div>
 
           {activeConversation.pinnedMessage && (
@@ -1663,6 +1963,92 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
               >
                 <X size={15} />
               </button>
+            </div>
+          )}
+
+          {/* Feature 7: Encryption Banner */}
+          {encryptionEnabled && (
+            <div style={{ background: "rgba(34,197,94,0.1)", borderBottom: "1px solid rgba(34,197,94,0.2)", padding: "0.4rem 1rem", display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.78rem", color: "#4ade80" }}>
+              <ShieldCheck size={14} /> End-to-End Encryption is ON for this conversation
+            </div>
+          )}
+
+          {/* Feature 3: Search Bar */}
+          {showSearch && (
+            <div style={{ padding: "0.6rem 1rem", borderBottom: "1px solid var(--panel-border)", background: "rgba(0,0,0,0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", background: "rgba(255,255,255,0.05)", borderRadius: "8px", padding: "0.4rem 0.75rem", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <Search size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Search messages..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  style={{ flex: 1, background: "none", border: "none", outline: "none", color: "white", fontSize: "0.9rem" }}
+                  autoFocus
+                />
+                {searchLoading && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Searching...</span>}
+                {searchQuery && <button type="button" onClick={() => { setSearchQuery(''); setSearchResults([]); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}><X size={14} /></button>}
+              </div>
+              {searchResults.length > 0 && (
+                <div style={{ marginTop: "0.5rem", maxHeight: "180px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{searchResults.length} result(s)</span>
+                  {searchResults.map(r => (
+                    <div
+                      key={r.id || r._id}
+                      onClick={() => { scrollToMessage(r.id || r._id); setShowSearch(false); setSearchQuery(''); setSearchResults([]); }}
+                      style={{ padding: "0.4rem 0.6rem", background: "rgba(167,139,250,0.1)", borderRadius: "6px", cursor: "pointer", fontSize: "0.85rem", border: "1px solid rgba(167,139,250,0.2)" }}
+                    >
+                      <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>
+                        {new Date(r.date_time || r.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <div style={{ color: "white", marginTop: "2px" }}>{r.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {searchQuery && !searchLoading && searchResults.length === 0 && (
+                <div style={{ marginTop: "0.5rem", fontSize: "0.82rem", color: "var(--text-muted)" }}>No messages found for "{searchQuery}"</div>
+              )}
+            </div>
+          )}
+
+          {/* Feature 7: Scheduled Messages Panel */}
+          {showScheduledPanel && (
+            <div style={{ padding: "0.75rem 1rem", borderBottom: "1px solid var(--panel-border)", background: "rgba(251,191,36,0.05)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                <Clock size={14} style={{ color: "#fbbf24" }} />
+                <span style={{ fontSize: "0.8rem", color: "#fbbf24", fontWeight: 600 }}>Scheduled Messages ({scheduledMessages.length})</span>
+              </div>
+              {scheduledMessages.length === 0 ? (
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>No scheduled messages</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", maxHeight: "150px", overflowY: "auto" }}>
+                  {scheduledMessages.map(m => (
+                    <div key={m.id || m._id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", background: "rgba(255,255,255,0.04)", borderRadius: "8px", padding: "0.4rem 0.6rem" }}>
+                      <Calendar size={13} style={{ color: "#fbbf24", flexShrink: 0 }} />
+                      <div style={{ flex: 1, fontSize: "0.82rem" }}>
+                        <div style={{ color: "white" }}>{m.text || '[Attachment]'}</div>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          Sends at {new Date(m.scheduledFor || m.scheduled_for).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => handleCancelScheduled(m.id || m._id)} style={{ background: "rgba(239,68,68,0.2)", border: "none", borderRadius: "6px", color: "#f87171", padding: "3px 8px", cursor: "pointer", fontSize: "0.75rem" }}>
+                        Cancel
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Feature 4: @Mention Toast */}
+          {mentionToast && (
+            <div style={{ position: "fixed", top: "1rem", right: "1rem", zIndex: 9999, background: "linear-gradient(135deg, #7c3aed, #a78bfa)", color: "white", padding: "0.75rem 1rem", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.5rem", boxShadow: "0 4px 20px rgba(0,0,0,0.4)", fontSize: "0.9rem", maxWidth: "320px" }}>
+              <AtSign size={16} />
+              <span>{mentionToast}</span>
+              <button type="button" onClick={() => setMentionToast(null)} style={{ background: "none", border: "none", color: "white", cursor: "pointer", marginLeft: "auto", padding: 0 }}><X size={14} /></button>
             </div>
           )}
 
@@ -1809,37 +2195,116 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                             </button>
                           </div>
 
-                          <div className="message-bubble">{m.text}</div>
+                          <div className="message-bubble">
+                            {/* Feature 4: Render @mentions highlighted */}
+                            {m.text.split(/(@\w+)/g).map((part, idx) =>
+                              part.startsWith('@') ? (
+                                <span key={idx} style={{ color: "#c4b5fd", fontWeight: 600 }}>{part}</span>
+                              ) : (
+                                <span key={idx}>{part}</span>
+                              )
+                            )}
+                          </div>
 
-                          <button
-                            onClick={() => handleLike(m)}
-                            title="Like"
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: "2px 4px",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "2px",
-                              color: m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "rgba(255,255,255,0.3)",
-                              fontSize: "0.72rem",
-                              flexShrink: 0,
-                              transition: "color 0.2s",
-                            }}
-                          >
-                            <Heart size={13} fill={m.liked_by && m.liked_by.includes(user.id) ? "#ef4444" : "none"} />
-                            {m.like_count > 0 && <span>{m.like_count}</span>}
-                          </button>
+                          {/* Feature 2: Emoji Reaction Picker */}
+                          <div style={{ position: "relative", flexShrink: 0 }}>
+                            <button
+                              onClick={() => setReactionPickerMsgId(prev => prev === (m.id || m._id) ? null : (m.id || m._id))}
+                              title="React"
+                              style={{
+                                background: "none", border: "none", cursor: "pointer",
+                                padding: "2px 4px", fontSize: "0.85rem",
+                                color: "rgba(255,255,255,0.3)",
+                                transition: "color 0.2s",
+                              }}
+                            >
+                              {m.reactions && m.reactions.find(r => r.userId === user.id || (r.userId && r.userId.toString() === user.id))
+                                ? m.reactions.find(r => r.userId === user.id || (r.userId && r.userId.toString() === user.id)).emoji
+                                : '😊'}
+                            </button>
+                            {reactionPickerMsgId === (m.id || m._id) && (
+                              <div style={{
+                                position: "absolute", bottom: "100%", right: isSent ? 0 : "auto", left: isSent ? "auto" : 0,
+                                background: "var(--panel-bg, #1e1b4b)", border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: "20px", padding: "4px 8px", display: "flex", gap: "4px",
+                                zIndex: 999, boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                              }}>
+                                {QUICK_REACTIONS.map(emoji => (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    onClick={() => handleReact(m, emoji)}
+                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1.2rem", padding: "2px", borderRadius: "50%", transition: "transform 0.1s" }}
+                                    onMouseEnter={e => e.target.style.transform = "scale(1.3)"}
+                                    onMouseLeave={e => e.target.style.transform = "scale(1)"}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
+
+                      {/* Feature 2: Show reaction counts */}
+                      {m.reactions && m.reactions.length > 0 && (() => {
+                        const reactionMap = {};
+                        m.reactions.forEach(r => {
+                          reactionMap[r.emoji] = (reactionMap[r.emoji] || 0) + 1;
+                        });
+                        return (
+                          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "4px" }}>
+                            {Object.entries(reactionMap).map(([emoji, count]) => (
+                              <span
+                                key={emoji}
+                                onClick={() => handleReact(m, emoji)}
+                                style={{
+                                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                                  borderRadius: "10px", padding: "1px 6px", fontSize: "0.78rem",
+                                  cursor: "pointer", display: "flex", alignItems: "center", gap: "3px",
+                                }}
+                              >
+                                {emoji} <span style={{ color: "var(--text-muted)" }}>{count}</span>
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
                       {m.attachment && (
-                        isAudioAttachment(m.attachment) ? (
+                        isAudioAttachment(m.attachment, m.attachment_type || m.attachmentType) ? (
                           <VoiceMessagePlayer
                             src={getAttachmentUrl(m.attachment)}
                             duration={m.audio_duration || m.audioDuration}
                             isSender={isSent}
                           />
+                        ) : isDocumentAttachment(m.attachment, m.attachment_type || m.attachmentType) ? (
+                          // Feature 1: Document attachment
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: "0.75rem",
+                            background: "rgba(255,255,255,0.07)", borderRadius: "10px",
+                            padding: "0.6rem 0.9rem", marginTop: m.text ? "0.4rem" : 0,
+                            border: "1px solid rgba(255,255,255,0.12)", maxWidth: "260px",
+                          }}>
+                            {(() => { const DocIcon = getDocumentIcon(m.attachment_name || m.attachmentName, m.attachment); return <DocIcon size={28} style={{ color: "#a78bfa", flexShrink: 0 }} />; })()}
+                            <div style={{ flex: 1, overflow: "hidden" }}>
+                              <div style={{ fontSize: "0.85rem", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {m.attachment_name || m.attachmentName || "Document"}
+                              </div>
+                              {(m.attachment_size || m.attachmentSize) && (
+                                <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                                  {formatFileSize(m.attachment_size || m.attachmentSize)}
+                                </div>
+                              )}
+                            </div>
+                            <a href={getAttachmentUrl(m.attachment)} target="_blank" rel="noopener noreferrer" download
+                              style={{ color: "#a78bfa", display: "flex", alignItems: "center", flexShrink: 0 }}
+                              title="Download"
+                            >
+                              <Download size={16} />
+                            </a>
+                          </div>
                         ) : (
                           <img
                             src={getAttachmentUrl(m.attachment)}
@@ -1890,7 +2355,7 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
           )}
 
           <form className="chat-input-container" onSubmit={handleSendMessage}>
-            {file && filePreviewUrl && !editingMessage && (
+            {file && filePreviewUrl && !editingMessage && fileType === 'image' && (
               <div className="attachment-preview">
                 <div className="attachment-preview-item">
                   <img src={filePreviewUrl} alt="Attached image preview" />
@@ -1906,18 +2371,78 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
               </div>
             )}
 
+            {/* Feature 1: Document preview */}
+            {file && fileType === 'document' && !editingMessage && (
+              <div style={{ padding: "0.5rem 1rem", display: "flex", alignItems: "center", gap: "0.5rem", background: "rgba(167,139,250,0.1)", borderTop: "1px solid rgba(167,139,250,0.2)" }}>
+                <FileText size={16} style={{ color: "#a78bfa" }} />
+                <span style={{ fontSize: "0.85rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{formatFileSize(file.size)}</span>
+                <button type="button" onClick={handleRemoveFile} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}><X size={14} /></button>
+              </div>
+            )}
+
+            {/* Feature 7: Scheduler datetime picker */}
+            {showScheduler && (
+              <div style={{ padding: "0.5rem 1rem", display: "flex", alignItems: "center", gap: "0.5rem", background: "rgba(251,191,36,0.1)", borderTop: "1px solid rgba(251,191,36,0.2)" }}>
+                <Calendar size={15} style={{ color: "#fbbf24", flexShrink: 0 }} />
+                <span style={{ fontSize: "0.82rem", color: "#fbbf24", flexShrink: 0 }}>Schedule for:</span>
+                <input
+                  type="datetime-local"
+                  value={scheduledFor}
+                  onChange={e => setScheduledFor(e.target.value)}
+                  min={getMinDateTime()}
+                  style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: "6px", color: "white", padding: "3px 8px", fontSize: "0.82rem", flex: 1 }}
+                />
+                <button type="button" onClick={() => { setShowScheduler(false); setScheduledFor(''); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}><X size={14} /></button>
+              </div>
+            )}
+
+            {/* Feature 4: @Mention autocomplete */}
+            {showMentionSuggestions && mentionSuggestions.length > 0 && (
+              <div style={{ padding: "0.3rem 0.5rem", background: "rgba(30,27,75,0.98)", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                {mentionSuggestions.map(p => (
+                  <button
+                    key={p.id || p._id}
+                    type="button"
+                    onClick={() => insertMention(p)}
+                    style={{
+                      background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)",
+                      borderRadius: "16px", padding: "3px 10px", color: "#c4b5fd",
+                      cursor: "pointer", fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.3rem",
+                    }}
+                  >
+                    <AtSign size={12} /> {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="chat-input-row">
             {!editingMessage && (
-              <label className="file-input-label" title="Attach image">
-                <Image size={20} />
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  style={{ display: "none" }}
-                  accept="image/*"
-                  onChange={handleFileSelect}
-                />
-              </label>
+              <>
+                {/* Feature 1: Image attach */}
+                <label className="file-input-label" title="Attach image">
+                  <Image size={20} />
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    style={{ display: "none" }}
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                  />
+                </label>
+                {/* Feature 1: Document attach */}
+                <label className="file-input-label" title="Attach document (PDF, Word, Excel…)" style={{ color: "rgba(255,255,255,0.6)" }}>
+                  <Paperclip size={20} />
+                  <input
+                    ref={docInputRef}
+                    type="file"
+                    style={{ display: "none" }}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+                    onChange={handleFileSelect}
+                  />
+                </label>
+              </>
             )}
 
             <div className="emoji-picker-container" ref={emojiPickerRef}>
@@ -1995,13 +2520,33 @@ export default function ChatConsole({ user, onLogout, onUserUpdate }) {
                 <Check size={18} />
               </button>
             ) : newMessage.trim() || file ? (
-              <button
-                type="submit"
-                className="send-btn"
-                title="Send message"
-              >
-                <Send size={18} />
-              </button>
+              <>
+                <button
+                  type="submit"
+                  className="send-btn"
+                  title="Send message"
+                >
+                  <Send size={18} />
+                </button>
+                {/* Feature 7: Schedule button */}
+                <button
+                  type="button"
+                  title="Schedule message"
+                  onClick={() => setShowScheduler(s => !s)}
+                  style={{
+                    background: showScheduler ? "rgba(251,191,36,0.3)" : "rgba(255,255,255,0.07)",
+                    border: `1px solid ${showScheduler ? "rgba(251,191,36,0.5)" : "rgba(255,255,255,0.1)"}`,
+                    borderRadius: "50%",
+                    width: 36, height: 36,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer",
+                    color: showScheduler ? "#fbbf24" : "rgba(255,255,255,0.4)",
+                    marginLeft: "4px",
+                  }}
+                >
+                  <Calendar size={16} />
+                </button>
+              </>
             ) : (
               <button
                 type="button"

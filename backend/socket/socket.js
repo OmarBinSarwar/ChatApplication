@@ -1,5 +1,6 @@
 const socketIo = require("socket.io");
 const User = require("../models/User");
+const { sendPushToUser } = require("../routes/push");
 
 const userSockets = new Map(); // Map user.id to socket.id
 const callRooms = new Map(); // Map roomId to Map of participants
@@ -50,7 +51,7 @@ const setupSocket = (server) => {
       socket.leave(roomId);
     });
 
-    socket.on("send_message", (data) => {
+    socket.on("send_message", async (data) => {
       const message = data.msg || data;
       const notifyUsers = data.notifyUsers || [];
 
@@ -67,6 +68,32 @@ const setupSocket = (server) => {
       }
 
       emitter.emit("new_message", message);
+
+      // Feature 6: Push notification to offline users
+      try {
+        const sender = await User.findById(message.sender_id);
+        const senderName = sender ? sender.name : "Someone";
+        const pushPayload = {
+          title: senderName,
+          body: message.text || (message.attachment ? "📎 Attachment" : "🎤 Voice message"),
+          icon: sender?.avatar || "/icon-192.png",
+          conversationId: message.conversation_id,
+        };
+
+        // Push to receiver(s) who are offline
+        const pushTargets = message.receiver_id
+          ? [message.receiver_id.toString()]
+          : notifyUsers.map(id => id.toString());
+
+        for (const uId of pushTargets) {
+          const isOnline = userSockets.has(uId);
+          if (!isOnline) {
+            sendPushToUser(uId, pushPayload);
+          }
+        }
+      } catch (pushErr) {
+        console.error("Push notification error in socket:", pushErr.message);
+      }
     });
 
     socket.on("typing", (data) => {
@@ -82,29 +109,40 @@ const setupSocket = (server) => {
         .emit("user_stop_typing", data.userId);
     });
 
-    socket.on("message_liked", (data) => {
+    // Feature 2: Emoji Reactions
+    socket.on("message_reacted", (data) => {
       // data: { conversationId, updatedMessage }
+      io.to(`conversation_${data.conversationId}`).emit("message_reacted", data.updatedMessage);
+    });
+
+    // Legacy like (kept for backward compat)
+    socket.on("message_liked", (data) => {
       io.to(`conversation_${data.conversationId}`).emit("message_liked", data.updatedMessage);
     });
 
     socket.on("message_edited", (data) => {
-      // data: { conversationId, updatedMessage }
       io.to(`conversation_${data.conversationId}`).emit("message_edited", data.updatedMessage);
     });
 
     socket.on("message_deleted", (data) => {
-      // data: { conversationId, updatedMessage }
       io.to(`conversation_${data.conversationId}`).emit("message_deleted", data.updatedMessage);
     });
 
     socket.on("message_pinned", (data) => {
-      // data: { conversationId, pinnedMessage }
       io.to(`conversation_${data.conversationId}`).emit("message_pinned", data);
     });
 
     socket.on("message_unpinned", (data) => {
-      // data: { conversationId }
       io.to(`conversation_${data.conversationId}`).emit("message_unpinned", data);
+    });
+
+    // Feature 4: @Mention notification
+    socket.on("user_mentioned", (data) => {
+      // data: { mentionedUserId, conversationId, senderName }
+      const mentionedSocketId = userSockets.get(data.mentionedUserId.toString());
+      if (mentionedSocketId) {
+        io.to(mentionedSocketId).emit("you_were_mentioned", data);
+      }
     });
 
     socket.on("call_user", (data) => {
@@ -163,32 +201,32 @@ const setupSocket = (server) => {
     socket.on("join_call_room", (data) => {
       const { roomId, userId, name } = data;
       socket.join(`call_${roomId}`);
-      
+
       if (!callRooms.has(roomId)) {
         callRooms.set(roomId, new Map());
       }
-      
+
       const roomParticipants = callRooms.get(roomId);
       const existingParticipants = Array.from(roomParticipants.values());
-      
+
       roomParticipants.set(socket.id, {
         socketId: socket.id,
         userId,
         name,
         isScreenSharing: false
       });
-      
+
       console.log(`User ${name} (${userId}) joined call room ${roomId}`);
-      
+
       socket.to(`call_${roomId}`).emit("user_joined_call", {
         socketId: socket.id,
         userId,
         name
       });
-      
+
       socket.emit("current_call_participants", existingParticipants);
     });
-    
+
     socket.on("send_call_signal", (data) => {
       const { targetSocketId, signalData, isScreenSharing } = data;
       io.to(targetSocketId).emit("receive_call_signal", {
@@ -197,7 +235,7 @@ const setupSocket = (server) => {
         isScreenSharing
       });
     });
-    
+
     socket.on("send_call_ice_candidate", (data) => {
       const { targetSocketId, candidate } = data;
       io.to(targetSocketId).emit("receive_call_ice_candidate", {
@@ -205,10 +243,10 @@ const setupSocket = (server) => {
         candidate
       });
     });
-    
+
     socket.on("leave_call_room", (roomId) => {
       socket.leave(`call_${roomId}`);
-      
+
       const roomParticipants = callRooms.get(roomId);
       if (roomParticipants) {
         const participantInfo = roomParticipants.get(socket.id);
@@ -219,14 +257,14 @@ const setupSocket = (server) => {
             userId: participantInfo.userId
           });
         }
-        
+
         if (roomParticipants.size === 0) {
           callRooms.delete(roomId);
         }
       }
       console.log(`User left call room ${roomId}`);
     });
-    
+
     socket.on("toggle_screenshare_signal", (data) => {
       const { roomId, isSharing } = data;
       const roomParticipants = callRooms.get(roomId);
@@ -240,12 +278,10 @@ const setupSocket = (server) => {
     });
 
     socket.on("start_group_call", (data) => {
-      // data: { conversationId, callerName, callerId }
       socket.to(`conversation_${data.conversationId}`).emit("group_call_incoming", data);
     });
 
     socket.on("end_group_call", (data) => {
-      // data: { conversationId }
       socket.to(`conversation_${data.conversationId}`).emit("group_call_ended", data);
     });
 
@@ -259,7 +295,7 @@ const setupSocket = (server) => {
             socketId: socket.id,
             userId: participantInfo.userId
           });
-          
+
           if (roomParticipants.size === 0) {
             callRooms.delete(roomId);
           }
@@ -281,6 +317,8 @@ const setupSocket = (server) => {
       console.log("User disconnected:", socket.id);
     });
   });
+
+  return io;
 };
 
 module.exports = setupSocket;

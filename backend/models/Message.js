@@ -9,6 +9,20 @@ const messageSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  // Feature 1: Document/File Sharing
+  attachmentType: {
+    type: String,
+    enum: ['image', 'document', 'audio', 'video', null],
+    default: null,
+  },
+  attachmentName: {
+    type: String,
+    default: null,
+  },
+  attachmentSize: {
+    type: Number,
+    default: null,
+  },
   sender: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -28,6 +42,12 @@ const messageSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  // Feature 2: Emoji Reactions (replaces likes)
+  reactions: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    emoji: { type: String }
+  }],
+  // Legacy likes kept for backward compatibility
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -52,7 +72,22 @@ const messageSchema = new mongoose.Schema({
   isForwarded: {
     type: Boolean,
     default: false,
-  }
+  },
+  // Feature 4: @Mention
+  mentions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  // Feature 7: Message Scheduling
+  scheduledFor: {
+    type: Date,
+    default: null,
+  },
+  status: {
+    type: String,
+    enum: ['sent', 'pending', 'cancelled'],
+    default: 'sent',
+  },
 }, { timestamps: true });
 
 messageSchema.set('toJSON', {
@@ -74,6 +109,10 @@ messageSchema.set('toJSON', {
     ret.reply_to = ret.replyTo;
     ret.audio_duration = ret.audioDuration;
     ret.is_forwarded = ret.isForwarded;
+    ret.attachment_type = ret.attachmentType;
+    ret.attachment_name = ret.attachmentName;
+    ret.attachment_size = ret.attachmentSize;
+    ret.scheduled_for = ret.scheduledFor;
   }
 });
 

@@ -52,6 +52,11 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Feature 6: Push Notifications
+  pushSubscription: {
+    type: Object,
+    default: null,
+  },
 }, { timestamps: true });
 
 // Transform output to match existing frontend expectations (using 'id' instead of '_id')
